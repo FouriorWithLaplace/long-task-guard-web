@@ -1,3 +1,9 @@
+# 长任务守护
+
+本机 Codex 会话守护应用。使用方式、自动续发规则和代码入口见 [守护业务说明](docs/guard-workflow.md)。
+
+以下为 Next.js 工程的通用说明。
+
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
 ## Getting Started
