@@ -26,14 +26,107 @@ export default function GuardLogs({ logs, compact = false }: { logs: GuardLog[];
   const output = useRef<HTMLDivElement>(null);
   const followOutput = useRef(true);
 
+  useEffect(function watchLogInteraction() {
+    if (!output.current) return;
+    const element = output.current;
+
+    let resumeTimer: number | undefined;
+    let mouseHeld = false;
+    let touchHeld = false;
+
+    function clearResumeTimer() {
+      window.clearTimeout(resumeTimer);
+      resumeTimer = undefined;
+    }
+
+    function resumeFollowing() {
+      clearResumeTimer();
+      followOutput.current = true;
+      element.scrollTop = element.scrollHeight;
+    }
+
+    function pauseFollowing() {
+      followOutput.current = false;
+      clearResumeTimer();
+      // 按住滚动条或触摸屏时不抢位置，松开后才开始计时。
+      if (!mouseHeld && !touchHeld) {
+        resumeTimer = window.setTimeout(resumeFollowing, 5000);
+      }
+    }
+
+    function handleScroll() {
+      // 程序滚动和日志更新不重置计时，只检查是否手动回到了底部。
+      if (followOutput.current || mouseHeld || touchHeld) return;
+      const distanceToBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
+      if (distanceToBottom <= 1) resumeFollowing();
+    }
+
+    function handleMouseDown(event: MouseEvent) {
+      if (event.button !== 0) return;
+      mouseHeld = true;
+      pauseFollowing();
+    }
+
+    function handleMouseUp(event: MouseEvent) {
+      if (event.button !== 0 || !mouseHeld) return;
+      mouseHeld = false;
+      pauseFollowing();
+      handleScroll();
+    }
+
+    function handleTouchStart() {
+      touchHeld = true;
+      pauseFollowing();
+    }
+
+    function handleTouchEnd(event: TouchEvent) {
+      touchHeld = event.targetTouches.length > 0;
+      pauseFollowing();
+      handleScroll();
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      const scrollKeys = ["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "];
+      if (scrollKeys.includes(event.key)) pauseFollowing();
+    }
+
+    function handleWindowBlur() {
+      if (!mouseHeld && !touchHeld) return;
+      mouseHeld = false;
+      touchHeld = false;
+      pauseFollowing();
+    }
+
+    element.addEventListener("wheel", pauseFollowing, { passive: true });
+    element.addEventListener("scroll", handleScroll);
+    element.addEventListener("mousedown", handleMouseDown);
+    element.addEventListener("touchstart", handleTouchStart, { passive: true });
+    element.addEventListener("touchend", handleTouchEnd, { passive: true });
+    element.addEventListener("touchcancel", handleTouchEnd, { passive: true });
+    element.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("mouseup", handleMouseUp);
+    window.addEventListener("blur", handleWindowBlur);
+
+    // 热更新也会重新运行 effect，恢复当前日志框的跟随状态。
+    resumeFollowing();
+
+    return function stopWatchingLogInteraction() {
+      clearResumeTimer();
+      element.removeEventListener("wheel", pauseFollowing);
+      element.removeEventListener("scroll", handleScroll);
+      element.removeEventListener("mousedown", handleMouseDown);
+      element.removeEventListener("touchstart", handleTouchStart);
+      element.removeEventListener("touchend", handleTouchEnd);
+      element.removeEventListener("touchcancel", handleTouchEnd);
+      element.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("mouseup", handleMouseUp);
+      window.removeEventListener("blur", handleWindowBlur);
+    };
+  }, []);
+
   useEffect(function scrollToLatest() {
     if (output.current && followOutput.current) output.current.scrollTop = output.current.scrollHeight;
   }, [logs, filter, clearedThrough]);
-
-  function handleScroll() {
-    const element = output.current;
-    if (element) followOutput.current = element.scrollHeight - element.scrollTop - element.clientHeight < 40;
-  }
 
   function handleFilterChange(event: ChangeEvent<HTMLSelectElement>) { setFilter(event.target.value); }
   function handleClear() {
@@ -65,7 +158,7 @@ export default function GuardLogs({ logs, compact = false }: { logs: GuardLog[];
       </div>
       <div className={compact ? "bg-slate-950" : "mx-5 mb-5 overflow-hidden rounded-xl bg-slate-950 sm:mx-6 sm:mb-6"}>
         {!compact && <div className="border-b border-white/10 px-4 py-3 text-xs text-slate-400">日志输出 · 最近 500 条</div>}
-        <div ref={output} onScroll={handleScroll} role="log" aria-label="运行日志" className={(compact ? "h-64 space-y-4" : "h-96 space-y-5") + " overflow-auto p-4 text-sm leading-6"}>
+        <div ref={output} tabIndex={0} role="log" aria-label="运行日志" className={(compact ? "h-64 space-y-4" : "h-96 space-y-5") + " overflow-auto p-4 text-sm leading-6"}>
           {visible.length === 0 && <p className="text-slate-500">暂无运行记录。</p>}
           {visible.map(function renderLog(log) {
             let label = "状态";

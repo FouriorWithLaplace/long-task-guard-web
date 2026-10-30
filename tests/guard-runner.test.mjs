@@ -10,6 +10,18 @@ const settings = {
 };
 const session = { id: settings.sessionId, title: "Existing session", projectPath: process.cwd() };
 
+test("resume and every new turn explicitly use full access without approval prompts", async function (t) {
+  const f = fixture();
+  t.after(async function cleanup() { await f.runner.pause(); });
+  await f.runner.start(settings, session);
+  const resume = f.calls.find(function (call) { return call.method === "thread/resume"; });
+  assert.equal(resume.params.approvalPolicy, "never");
+  assert.equal(resume.params.sandbox, "danger-full-access");
+  const turn = f.starts()[0];
+  assert.equal(turn.params.approvalPolicy, "never");
+  assert.deepEqual(turn.params.sandboxPolicy, { type: "dangerFullAccess" });
+});
+
 async function settle() {
   for (let i = 0; i < 15; i++) await Promise.resolve();
 }
@@ -80,6 +92,7 @@ test("resumes selected session, sends selected model/effort, merges real streame
     assert.equal(calls[1].params.threadId, settings.sessionId);
     assert.deepEqual(starts()[0].params, {
       threadId: settings.sessionId, cwd: session.projectPath, model: settings.model, effort: settings.reasoning,
+      approvalPolicy: "never", sandboxPolicy: { type: "dangerFullAccess" },
       input: [{ type: "text", text: settings.startMessage, text_elements: [] }],
     });
     const client = clients[0];
@@ -280,11 +293,11 @@ test("turn completion stops remaining indicators and ignores foreign or stale ac
     clients[0].complete("turn-1");
     const activity = runner.snapshot().logs.find(log => log.role === "tool");
     assert.equal(activity.activityStatus, "ended");
-    assert.equal(runner.snapshot().phase, "paused");
+    assert.equal(runner.snapshot().phase, "waiting");
   } finally { await runner.pause(); }
 });
 
-test("restarting after automatic pause does not wait for the previous start acknowledgement", async function () {
+test("restarting after an explicit pause does not wait for the previous start acknowledgement", async function () {
   const startResponse = deferred();
   const { runner, clients, starts } = fixture({ earlyCompletion: true, startResponse });
   const selected = { ...settings, completeMessage: "" };
@@ -292,6 +305,8 @@ test("restarting after automatic pause does not wait for the previous start ackn
   let secondStart;
   try {
     await settle();
+    assert.equal(runner.snapshot().phase, "waiting");
+    await runner.pause();
     assert.equal(runner.snapshot().phase, "paused");
     secondStart = runner.start(selected, session);
     await settle();
@@ -487,13 +502,33 @@ test("immediate retry is not lost when failed completion precedes turn/start ack
   } finally { await runner.pause(); }
 });
 
-test("empty follow-up pauses instead of sending empty messages", async function () {
+test("empty follow-ups use defaults for completion and retry and never automatically pause", async function (t) {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
   const { runner, clients, starts } = fixture();
-  await runner.start({ ...settings, completeMessage: "" }, session);
-  clients[0].complete("turn-1");
-  assert.equal(runner.snapshot().phase, "paused");
-  assert.equal(starts().length, 1);
-  assert.equal(clients[0].closed, true);
+  try {
+    await runner.start({ ...settings, completeMessage: "", retryMessage: "" }, session);
+    clients[0].complete("turn-1");
+    assert.equal(runner.snapshot().phase, "waiting");
+    t.mock.timers.tick(0); await settle();
+    assert.equal(starts().length, 2);
+    assert.ok(starts()[1].params.input[0].text.trim());
+    clients[0].complete("turn-2", "failed");
+    t.mock.timers.tick(0); await settle();
+    assert.equal(starts().length, 3);
+    assert.ok(starts()[2].params.input[0].text.trim());
+    assert.equal(runner.snapshot().phase, "running");
+  } finally { await runner.pause(); }
+});
+
+test("unsupported interaction is rejected without automatically pausing the guard", async function () {
+  const { runner, clients, calls } = fixture();
+  try {
+    await runner.start(settings, session);
+    clients[0].events.onRequest(9, "unknown/interaction", { threadId: settings.sessionId });
+    assert.equal(runner.snapshot().phase, "running");
+    assert.equal(clients[0].closed, false);
+    assert.ok(calls.some(function (call) { return call.method === "rejection" && call.id === 9; }));
+  } finally { await runner.pause(); }
 });
 
 test("completion before turn/start acknowledgement keeps the scheduled continuation", async function (t) {

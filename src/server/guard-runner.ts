@@ -110,7 +110,7 @@ export class GuardRunner {
     }
 
     const generation = ++this.generation;
-    // 上一轮可能已自动暂停，但 turn/start 的响应仍未返回。
+    // 上一轮可能已被明确暂停，但 turn/start 的响应仍未返回。
     // 新一轮有独立的 generation，不能被旧一轮的发送标记挡住。
     this.sending = false;
     this.awaitingTurn = false;
@@ -240,6 +240,8 @@ export class GuardRunner {
       threadId: settings.sessionId,
       cwd: this.state.projectPath,
       model: settings.model,
+      approvalPolicy: "never",
+      sandbox: "danger-full-access",
       excludeTurns: true,
     }));
     const thread = record(result.thread);
@@ -276,6 +278,8 @@ export class GuardRunner {
         threadId: settings.sessionId,
         cwd: this.state.projectPath,
         model: settings.model,
+        approvalPolicy: "never",
+        sandboxPolicy: { type: "dangerFullAccess" },
         effort: settings.reasoning,
         input: [{ type: "text", text: message, text_elements: [] }],
       }));
@@ -402,11 +406,12 @@ export class GuardRunner {
     }
 
     if (message.trim() === "") {
-      this.connection?.close();
-      this.connection = null;
-      this.state.phase = "paused";
-      this.addLog("status", "system", "未设置后续发送内容，守护已暂停。" );
-      return;
+      message = kind === "retry"
+        ? "请读取当前任务断点并继续执行。除非用户明确要求，不得暂停或删除守护；保留已完成结果，不盲目重放写入。"
+        : "请核对当前任务结果并继续处理尚未完成的内容。若全部完成，汇报结果并等待用户下一步指令；除非用户明确要求，不得暂停或删除守护。";
+      if (kind === "retry") settings.retryMessage = message;
+      else settings.completeMessage = message;
+      this.addLog("status", "system", "未设置后续发送内容，使用默认继续消息，守护保持启用。" );
     }
 
     this.state.phase = "waiting";
@@ -453,8 +458,7 @@ export class GuardRunner {
       }
     } else {
       this.connection?.rejectRequest(id, "当前界面不支持此交互：" + method);
-      this.addLog("status", "system", "Codex 需要额外交互，守护已暂停：" + method);
-      void this.pause();
+      this.addLog("error", "system", "当前界面不支持此交互，已拒绝请求，守护保持启用：" + method);
       return;
     }
 
