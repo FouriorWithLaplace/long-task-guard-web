@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { ChangeEvent } from "react";
 import type { GuardLog } from "@/types/guard";
 
@@ -19,7 +19,8 @@ function summarizeProgress(message: string): string {
   return summary;
 }
 
-export default function GuardLogs({ logs }: { logs: GuardLog[] }) {
+export default function GuardLogs({ logs, compact = false }: { logs: GuardLog[]; compact?: boolean }) {
+  const headingId = useId();
   const [filter, setFilter] = useState("all");
   const [clearedThrough, setClearedThrough] = useState(0);
   const output = useRef<HTMLDivElement>(null);
@@ -49,22 +50,22 @@ export default function GuardLogs({ logs }: { logs: GuardLog[] }) {
   }
 
   return (
-    <section aria-labelledby="logs-heading" className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-      <div className="flex flex-wrap items-center justify-between gap-4 p-5 sm:p-6">
+    <section aria-labelledby={headingId} className={compact ? "overflow-hidden border-y border-slate-100 bg-white" : "overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"}>
+      <div className={compact ? "px-5 py-3" : "flex flex-wrap items-center justify-between gap-4 p-5 sm:p-6"}>
         <div>
-          <h2 id="logs-heading" className="text-base font-semibold">运行记录</h2>
-          <p className="mt-1 text-sm text-slate-500">每一步只显示简短进展和关键状态。</p>
+          <h2 id={headingId} className={compact ? "text-xs font-medium text-slate-500" : "text-base font-semibold"}>{compact ? "实时消息" : "运行记录"}</h2>
+          {!compact && <p className="mt-1 text-sm text-slate-500">每一步只显示简短进展和关键状态。</p>}
         </div>
-        <div className="flex flex-wrap items-center gap-3">
+        {!compact && <div className="flex flex-wrap items-center gap-3">
           <select aria-label="日志类型" value={filter} onChange={handleFilterChange} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600">
             <option value="all">全部类型</option><option value="status">状态</option><option value="message">进展</option><option value="error">错误</option>
           </select>
           <button type="button" onClick={handleClear} className="rounded-lg px-3 py-2 text-sm text-slate-500 hover:bg-slate-100">清空当前显示</button>
-        </div>
+        </div>}
       </div>
-      <div className="mx-5 mb-5 overflow-hidden rounded-xl bg-slate-950 sm:mx-6 sm:mb-6">
-        <div className="border-b border-white/10 px-4 py-3 text-xs text-slate-400">日志输出 · 最近 500 条</div>
-        <div ref={output} onScroll={handleScroll} role="log" aria-label="运行日志" className="h-96 space-y-5 overflow-auto p-4 text-sm leading-6">
+      <div className={compact ? "bg-slate-950" : "mx-5 mb-5 overflow-hidden rounded-xl bg-slate-950 sm:mx-6 sm:mb-6"}>
+        {!compact && <div className="border-b border-white/10 px-4 py-3 text-xs text-slate-400">日志输出 · 最近 500 条</div>}
+        <div ref={output} onScroll={handleScroll} role="log" aria-label="运行日志" className={(compact ? "h-64 space-y-4" : "h-96 space-y-5") + " overflow-auto p-4 text-sm leading-6"}>
           {visible.length === 0 && <p className="text-slate-500">暂无运行记录。</p>}
           {visible.map(function renderLog(log) {
             let label = "状态";

@@ -2,9 +2,9 @@ import type { GuardSnapshot } from "@/types/guard";
 
 type SnapshotListener = (snapshot: GuardSnapshot) => void;
 
-export interface GuardEventSource {
-  snapshot(): GuardSnapshot;
-  subscribe(listener: SnapshotListener): () => void;
+export interface GuardEventSource<Snapshot = GuardSnapshot> {
+  snapshot(): Snapshot;
+  subscribe(listener: (snapshot: Snapshot) => void): () => void;
 }
 
 // 网页订阅这个稳定入口；热更新替换任务实例时，现有连接也能收到新任务的进展。

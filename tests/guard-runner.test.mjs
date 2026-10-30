@@ -284,6 +284,27 @@ test("turn completion stops remaining indicators and ignores foreign or stale ac
   } finally { await runner.pause(); }
 });
 
+test("restarting after automatic pause does not wait for the previous start acknowledgement", async function () {
+  const startResponse = deferred();
+  const { runner, clients, starts } = fixture({ earlyCompletion: true, startResponse });
+  const selected = { ...settings, completeMessage: "" };
+  const firstStart = runner.start(selected, session);
+  let secondStart;
+  try {
+    await settle();
+    assert.equal(runner.snapshot().phase, "paused");
+    secondStart = runner.start(selected, session);
+    await settle();
+    assert.equal(clients.length, 2);
+    assert.equal(starts().length, 2);
+    assert.equal(runner.snapshot().runId, 2);
+  } finally {
+    startResponse.resolve();
+    await Promise.all([firstStart, secondStart]);
+    await runner.pause();
+  }
+});
+
 test("normal completion and failure continue immediately; duplicate events do not duplicate sends", async function (t) {
   t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 100000 });
   const { runner, clients, starts } = fixture();

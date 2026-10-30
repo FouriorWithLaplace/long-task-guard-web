@@ -54,3 +54,23 @@ export interface GuardSnapshot {
   requests: GuardRequest[];
   logs: GuardLog[];
 }
+
+export interface ManagedGuardSnapshot extends GuardSnapshot {
+  id: string;
+  createdAt: string;
+  deleting: boolean;
+}
+
+export interface GuardCollectionSnapshot {
+  instanceId: string;
+  revision: number;
+  guards: ManagedGuardSnapshot[];
+}
+
+export type GuardBulkAction = "start" | "pause" | "delete";
+
+export interface GuardOperationResult {
+  id: string;
+  success: boolean;
+  error?: string;
+}

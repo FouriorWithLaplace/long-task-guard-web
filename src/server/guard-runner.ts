@@ -62,6 +62,7 @@ export class GuardRunner {
   private nextLogId = 0;
   private listeners = new Set<(snapshot: GuardSnapshot) => void>();
   private notificationQueued = false;
+  private pauseOperation: Promise<GuardSnapshot> | null = null;
   private state: GuardSnapshot = {
     instanceId: randomUUID(), revision: 0, runId: 0, phase: "paused", settings: null,
     sessionTitle: "", projectPath: "", turnId: null,
@@ -109,6 +110,10 @@ export class GuardRunner {
     }
 
     const generation = ++this.generation;
+    // 上一轮可能已自动暂停，但 turn/start 的响应仍未返回。
+    // 新一轮有独立的 generation，不能被旧一轮的发送标记挡住。
+    this.sending = false;
+    this.awaitingTurn = false;
     this.state.runId++;
     this.state.settings = { ...settings };
     this.state.sessionTitle = session.title;
@@ -121,6 +126,18 @@ export class GuardRunner {
   }
 
   async pause(): Promise<GuardSnapshot> {
+    // 多个网页或批量删除同时暂停时，等待同一次中断完成。
+    if (this.pauseOperation) return this.pauseOperation;
+    const operation = this.pauseCurrentRun();
+    this.pauseOperation = operation;
+    try {
+      return await operation;
+    } finally {
+      if (this.pauseOperation === operation) this.pauseOperation = null;
+    }
+  }
+
+  private async pauseCurrentRun(): Promise<GuardSnapshot> {
     if (this.state.phase === "paused" || this.state.phase === "stopping") {
       return this.snapshot();
     }

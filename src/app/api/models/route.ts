@@ -1,5 +1,6 @@
 import { connection } from "next/server";
 import { readCachedModelCatalog, refreshModelCatalog } from "@/server/model-catalog";
+import { checkGuardOrigin } from "@/server/guard-http";
 
 function errorResponse(error: unknown) {
   let message = "读取模型目录失败。";
@@ -23,13 +24,10 @@ export async function GET() {
   }
 }
 
-// 只有用户点击更新按钮才会发送这个请求。
+// 页面点击更新或 API 客户端显式刷新时才查询 Codex。
 export async function POST(request: Request) {
-  const origin = request.headers.get("origin");
-
-  if (origin !== new URL(request.url).origin) {
-    return Response.json({ error: "请求来源不匹配。" }, { status: 403 });
-  }
+  const rejected = checkGuardOrigin(request);
+  if (rejected) return rejected;
 
   try {
     const catalog = await refreshModelCatalog();

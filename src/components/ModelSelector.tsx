@@ -12,6 +12,7 @@ interface ModelSelection {
 interface ModelSelectorProps extends ModelSelection {
   onChange: (model: string, reasoning: string) => void;
   locked?: boolean;
+  restorePreference?: boolean;
 }
 
 const preferenceKey = "long-task-guard.model-selection";
@@ -94,7 +95,7 @@ function errorMessage(error: unknown): string {
   return "读取模型目录失败，请重试。";
 }
 
-export default function ModelSelector({ model, reasoning, onChange, locked = false }: ModelSelectorProps) {
+export default function ModelSelector({ model, reasoning, onChange, locked = false, restorePreference = true }: ModelSelectorProps) {
   const [catalog, setCatalog] = useState<ModelCatalog>({ version: 1, updatedAt: null, models: [] });
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -113,9 +114,11 @@ export default function ModelSelector({ model, reasoning, onChange, locked = fal
           return;
         }
 
-        const selection = chooseSelection(cached.models, readSelection());
         setCatalog(cached);
-        onChange(selection.model, selection.reasoning);
+        if (restorePreference) {
+          const selection = chooseSelection(cached.models, readSelection());
+          onChange(selection.model, selection.reasoning);
+        }
       } catch (failure) {
         if (!controller.signal.aborted) {
           setError(errorMessage(failure));
@@ -132,7 +135,7 @@ export default function ModelSelector({ model, reasoning, onChange, locked = fal
     return function cancelLoading() {
       controller.abort();
     };
-  }, [onChange]);
+  }, [onChange, restorePreference]);
 
   async function handleRefresh() {
     if (loading || refreshing || locked) {

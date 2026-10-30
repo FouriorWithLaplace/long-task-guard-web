@@ -1,7 +1,9 @@
 import type { GuardEventSource } from "./guard-event-hub";
-import type { GuardSnapshot } from "@/types/guard";
 
-export function createGuardEventStream(source: GuardEventSource, signal: AbortSignal): ReadableStream<Uint8Array> {
+export function createGuardEventStream<Snapshot extends { instanceId: string; revision: number }>(
+  source: GuardEventSource<Snapshot>,
+  signal: AbortSignal,
+): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
   let controller: ReadableStreamDefaultController<Uint8Array>;
   let heartbeat: ReturnType<typeof setInterval>;
@@ -9,7 +11,7 @@ export function createGuardEventStream(source: GuardEventSource, signal: AbortSi
   let stopped = false;
   let lastRevision = -1;
   let lastInstanceId = "";
-  let pending: GuardSnapshot | null = null;
+  let pending: Snapshot | null = null;
 
   function cleanup() {
     if (stopped) return;
@@ -26,7 +28,7 @@ export function createGuardEventStream(source: GuardEventSource, signal: AbortSi
     controller.close();
   }
 
-  function sendSnapshot(snapshot: GuardSnapshot) {
+  function sendSnapshot(snapshot: Snapshot) {
     if (stopped) return;
     if (snapshot.instanceId === lastInstanceId && snapshot.revision === lastRevision) return;
 

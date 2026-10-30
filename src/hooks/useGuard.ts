@@ -1,7 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import type { GuardSettings, GuardSnapshot } from "@/types/guard";
+import { useCallback, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useGuards } from "@/hooks/useGuards";
+import type { GuardCollectionSnapshot, GuardSettings, GuardSnapshot, ManagedGuardSnapshot } from "@/types/guard";
 
 const emptySnapshot: GuardSnapshot = {
   instanceId: "", revision: -1, runId: 0, phase: "paused", settings: null,
@@ -14,16 +16,18 @@ function errorMessage(error: unknown): string {
   return "无法连接本地守护服务。";
 }
 
-export function useGuard(onRestoreSettings: (settings: GuardSettings) => void) {
+export function useGuard(guardId: string | null, onRestoreSettings: (settings: GuardSettings) => void) {
+  const router = useRouter();
   const [guard, setGuard] = useState<GuardSnapshot>(emptySnapshot);
-  const [loaded, setLoaded] = useState(false);
+  const [missing, setMissing] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [starting, setStarting] = useState(false);
   const [pausing, setPausing] = useState(false);
   const [error, setError] = useState("");
-  const [connectionError, setConnectionError] = useState("");
   const latest = useRef(emptySnapshot);
+  const startingRef = useRef(false);
 
-  const acceptSnapshot = useCallback(function acceptSnapshot(snapshot: GuardSnapshot) {
+  const acceptSnapshot = useCallback(function acceptSnapshot(snapshot: ManagedGuardSnapshot) {
     const previous = latest.current;
     if (snapshot.instanceId === previous.instanceId && snapshot.revision < previous.revision) return;
     if (snapshot.settings !== null && (previous.instanceId !== snapshot.instanceId || previous.runId !== snapshot.runId)) {
@@ -31,55 +35,40 @@ export function useGuard(onRestoreSettings: (settings: GuardSettings) => void) {
     }
     latest.current = snapshot;
     setGuard(snapshot);
+    setDeleting(snapshot.deleting);
   }, [onRestoreSettings]);
 
-  // 建立一次 SSE 连接，由服务器在状态变化时主动推送。
-  useEffect(function watchGuard() {
-    const stream = new EventSource("/api/guard/events");
+  const receiveCollection = useCallback(function receiveCollection(snapshot: GuardCollectionSnapshot) {
+    const selected = snapshot.guards.find(function match(item) { return item.id === guardId; });
+    setMissing(!selected);
+    if (selected) acceptSnapshot(selected);
+  }, [guardId, acceptSnapshot]);
+  const collection = useGuards(guardId !== null, receiveCollection);
+  const loaded = guardId === null || (collection.loaded && !missing && guard.instanceId !== "");
 
-    function receiveSnapshot(event: MessageEvent<string>) {
-      try {
-        const snapshot = JSON.parse(event.data) as GuardSnapshot;
-        acceptSnapshot(snapshot);
-        setLoaded(true);
-        setConnectionError("");
-      } catch (failure) {
-        setConnectionError(errorMessage(failure));
-      }
-    }
-
-    function reconnecting() {
-      setLoaded(false);
-      setConnectionError("实时连接已断开，正在重新连接…");
-    }
-
-    stream.addEventListener("snapshot", receiveSnapshot);
-    stream.addEventListener("error", reconnecting);
-
-    return function stopWatching() {
-      stream.removeEventListener("snapshot", receiveSnapshot);
-      stream.removeEventListener("error", reconnecting);
-      stream.close();
-    };
-  }, [acceptSnapshot]);
-
-  async function sendAction(body: object) {
+  async function sendAction(body: object): Promise<ManagedGuardSnapshot> {
     setError("");
-    const response = await fetch("/api/guard", {
+    const path = guardId === null ? "/api/guards" : "/api/guards/" + encodeURIComponent(guardId);
+    const response = await fetch(path, {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
     });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || "守护操作失败。" );
     acceptSnapshot(data);
+    return data;
   }
 
   async function start(settings: GuardSettings) {
+    if (startingRef.current) return;
+    startingRef.current = true;
     setStarting(true);
     try {
-      await sendAction({ action: "start", settings: settings });
+      const created = await sendAction({ action: "start", settings: settings });
+      if (guardId === null) router.replace("/guards/" + encodeURIComponent(created.id));
     } catch (failure) {
       setError(errorMessage(failure));
     } finally {
+      startingRef.current = false;
       setStarting(false);
     }
   }
@@ -103,5 +92,7 @@ export function useGuard(onRestoreSettings: (settings: GuardSettings) => void) {
     }
   }
 
-  return { guard: guard, loaded: loaded, starting: starting, pausing: pausing, error: error || connectionError, start: start, pause: pause, respond: respond };
+  let visibleError = error || collection.error;
+  if (missing) visibleError = "守护不存在或已被删除。";
+  return { guard: guard, loaded: loaded, missing: missing, deleting: deleting, starting: starting, pausing: pausing, error: visibleError, start: start, pause: pause, respond: respond };
 }
