@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { GuardRunner } from "../src/server/guard-runner.ts";
+import { GuardEventHub } from "../src/server/guard-event-hub.ts";
+import { createGuardEventStream } from "../src/server/guard-events.ts";
 
 const settings = {
   sessionId: "existing-thread", model: "chosen-model", reasoning: "high",
@@ -91,6 +93,194 @@ test("resumes selected session, sends selected model/effort, merges real streame
     assert.ok(!runner.snapshot().logs.some(function (log) { return log.text === "Ignore me"; }));
     await assert.rejects(runner.start(settings, session));
     assert.equal(starts().length, 1);
+  } finally { await runner.pause(); }
+});
+
+test("SSE pushes startup and partial AI progress before start resolves and without pausing", { timeout: 3000 }, async function () {
+  const initialize = deferred();
+  const startResponse = deferred();
+  const { runner, clients } = fixture({ initialize, startResponse });
+  const reader = createGuardEventStream(new GuardEventHub(runner), new AbortController().signal).getReader();
+  let startFinished = false;
+  let started;
+
+  async function nextSnapshot() {
+    const { value } = await reader.read();
+    const frame = new TextDecoder().decode(value);
+    return JSON.parse(frame.match(/^data: (.+)$/m)[1]);
+  }
+
+  try {
+    await nextSnapshot();
+    started = runner.start(settings, session).then(function () { startFinished = true; });
+    assert.equal((await nextSnapshot()).phase, "starting");
+    assert.equal(startFinished, false);
+    initialize.resolve();
+    await settle();
+    assert.equal((await nextSnapshot()).phase, "running");
+
+    clients[0].notify("item/agentMessage/delta", { turnId: "turn-1", itemId: "progress", delta: "Checking" });
+    assert.equal((await nextSnapshot()).logs.at(-1).text, "Checking");
+    clients[0].notify("item/agentMessage/delta", { turnId: "turn-1", itemId: "progress", delta: " the project." });
+    assert.equal((await nextSnapshot()).logs.at(-1).text, "Checking the project.");
+    assert.equal(startFinished, false);
+    assert.equal(runner.snapshot().phase, "running");
+  } finally {
+    initialize.resolve();
+    startResponse.resolve();
+    await started;
+    await reader.cancel();
+    await runner.pause();
+  }
+});
+
+test("tool activity is pushed immediately, updated in place, and never includes raw details", async function () {
+  const { runner, clients } = fixture();
+  const snapshots = [];
+  const unsubscribe = runner.subscribe(function receive(snapshot) { snapshots.push(snapshot); });
+  try {
+    await runner.start(settings, session);
+    const client = clients[0];
+    const item = {
+      id: "command", type: "commandExecution", command: "secret-command --private-arguments",
+      commandActions: [{ type: "search", command: "secret-command", query: "private-query", path: "private-path" }],
+    };
+    client.notify("item/started", { turnId: "turn-1", item });
+    await settle();
+    const started = snapshots.at(-1).logs.at(-1);
+    assert.equal(started.text, "搜索代码");
+    assert.equal(started.activityStatus, "running");
+    assert.equal(snapshots.at(-1).phase, "running");
+    const revision = runner.snapshot().revision;
+    client.notify("item/commandExecution/outputDelta", { turnId: "turn-1", itemId: "command", delta: "Large detailed tool output" });
+    client.notify("item/fileChange/patchUpdated", { turnId: "turn-1", itemId: "change", patch: "private-patch" });
+    assert.equal(runner.snapshot().revision, revision);
+    const finished = { ...item, status: "completed", aggregatedOutput: "Large detailed tool output", exitCode: 0 };
+    client.notify("item/completed", { turnId: "turn-1", item: finished });
+    const completed = runner.snapshot().logs.at(-1);
+    assert.equal(completed.id, started.id);
+    assert.equal(completed.activityStatus, "completed");
+    const afterCompletion = runner.snapshot().revision;
+    client.notify("item/completed", { turnId: "turn-1", item: finished });
+    client.notify("item/started", { turnId: "turn-1", item });
+    assert.equal(runner.snapshot().revision, afterCompletion);
+    client.notify("item/completed", { turnId: "turn-1", item: { id: "change", type: "fileChange", changes: [{ path: "private-file.ts", diff: "private-diff" }] } });
+    assert.equal(runner.snapshot().logs.at(-1).text, "修改文件");
+    const serialized = JSON.stringify(runner.snapshot());
+    for (const secret of ["secret-command", "private-arguments", "private-query", "private-path", "private-patch", "private-file.ts", "private-diff", "Large detailed tool output"]) {
+      assert.ok(!serialized.includes(secret), "must omit " + secret);
+    }
+
+    client.notify("item/agentMessage/delta", { turnId: "turn-1", itemId: "progress", delta: "Checking the project structure." });
+    assert.equal(runner.snapshot().logs.at(-1).text, "Checking the project structure.");
+  } finally { unsubscribe(); await runner.pause(); }
+});
+
+test("activity descriptions use structured actions and preserve actual failure or rejection", async function () {
+  const { runner, clients } = fixture();
+  try {
+    await runner.start(settings, session);
+    const items = [
+      [{ type: "commandExecution", commandActions: [{ type: "read" }, { type: "listFiles" }] }, "读取文件、浏览工程目录"],
+      [{ type: "commandExecution", command: "arbitrary command" }, "执行命令"],
+      [{ type: "webSearch", query: "private-query" }, "搜索网页"],
+      [{ type: "mcpToolCall", arguments: { private: "argument" } }, "调用外部工具"],
+      [{ type: "dynamicToolCall", success: false }, "调用工具"],
+      [{ type: "collabAgentToolCall" }, "协作处理任务"],
+    ];
+    for (let index = 0; index < items.length; index++) {
+      const [item, description] = items[index];
+      clients[0].notify("item/completed", { turnId: "turn-1", item: { id: "tool-" + index, ...item } });
+      assert.equal(runner.snapshot().logs.at(-1).text, description);
+    }
+    assert.equal(runner.snapshot().logs.find(log => log.itemKey?.endsWith("tool-4")).activityStatus, "failed");
+    for (const status of ["failed", "declined", "interrupted"]) {
+      clients[0].notify("item/completed", { turnId: "turn-1", item: { id: status, type: "fileChange", status } });
+      assert.equal(runner.snapshot().logs.at(-1).activityStatus, status);
+    }
+    clients[0].notify("item/completed", { turnId: "turn-1", item: { id: "exit-failure", type: "commandExecution", status: "completed", exitCode: 1 } });
+    assert.equal(runner.snapshot().logs.at(-1).activityStatus, "failed");
+  } finally { await runner.pause(); }
+});
+
+test("plan steps update in place, skip future steps, and drop verbose explanations", async function () {
+  const { runner, clients } = fixture();
+  try {
+    await runner.start(settings, session);
+    const plan = [
+      { step: "Locate display issues. Extra private detail.", status: "inProgress" },
+      { step: "Apply changes", status: "pending" },
+    ];
+    clients[0].notify("turn/plan/updated", { turnId: "turn-1", explanation: "private-explanation", plan });
+    const first = runner.snapshot().logs.at(-1);
+    assert.equal(first.text, "Locate display issues.");
+    assert.equal(first.activityStatus, "running");
+    const revision = runner.snapshot().revision;
+    clients[0].notify("turn/plan/updated", { turnId: "turn-1", plan });
+    assert.equal(runner.snapshot().revision, revision);
+    plan[0].status = "completed";
+    plan[1].status = "inProgress";
+    clients[0].notify("turn/plan/updated", { turnId: "turn-1", plan });
+    const progress = runner.snapshot().logs.filter(log => log.itemKey?.includes(":plan:"));
+    assert.equal(progress.length, 2);
+    assert.equal(progress[0].id, first.id);
+    assert.equal(progress[0].activityStatus, "completed");
+    assert.equal(progress[1].text, "Apply changes");
+    assert.equal(progress[1].activityStatus, "running");
+    assert.ok(!JSON.stringify(runner.snapshot()).includes("private"));
+    clients[0].notify("turn/plan/updated", { turnId: "turn-1", plan: [] });
+    assert.equal(runner.snapshot().logs.at(-1).activityStatus, "ended");
+  } finally { await runner.pause(); }
+});
+
+test("reasoning summaries stream their short topic, ignore raw reasoning, and deduplicate final summaries", async function () {
+  const { runner, clients } = fixture();
+  try {
+    await runner.start(settings, session);
+    const params = { turnId: "turn-1", itemId: "reason", summaryIndex: 0 };
+    clients[0].notify("item/reasoning/summaryTextDelta", { ...params, delta: "**Locating" });
+    assert.equal(runner.snapshot().logs.at(-1).text, "Locating");
+    clients[0].notify("item/reasoning/summaryTextDelta", { ...params, delta: " display issues**\n\nprivate-summary-details" });
+    const summary = runner.snapshot().logs.at(-1);
+    assert.equal(summary.text, "Locating display issues");
+    const revision = runner.snapshot().revision;
+    clients[0].notify("item/reasoning/textDelta", { ...params, delta: "private-raw-reasoning" });
+    assert.equal(runner.snapshot().revision, revision);
+    clients[0].notify("item/completed", { turnId: "turn-1", item: {
+      id: "reason", type: "reasoning", summary: ["**Locating display issues**\n\nprivate-summary-details"], content: ["private-raw-reasoning"],
+    } });
+    assert.equal(runner.snapshot().logs.at(-1).id, summary.id);
+    assert.equal(runner.snapshot().revision, revision);
+    assert.ok(!JSON.stringify(runner.snapshot()).includes("private"));
+  } finally { await runner.pause(); }
+});
+
+test("pause and disconnection stop activity indicators without claiming success", async function () {
+  const { runner, clients } = fixture();
+  try {
+    await runner.start(settings, session);
+    clients[0].notify("item/started", { turnId: "turn-1", item: { id: "paused-command", type: "commandExecution" } });
+    await runner.pause();
+    assert.equal(runner.snapshot().logs.find(log => log.role === "tool").activityStatus, "interrupted");
+    await runner.start(settings, session);
+    clients[1].notify("item/started", { turnId: "turn-2", item: { id: "disconnected-command", type: "commandExecution" } });
+    clients[1].events.onDisconnect(new Error("Fixture disconnect"));
+    assert.ok(runner.snapshot().logs.filter(log => log.role === "tool").every(log => log.activityStatus === "interrupted"));
+  } finally { await runner.pause(); }
+});
+
+test("turn completion stops remaining indicators and ignores foreign or stale activity", async function () {
+  const { runner, clients } = fixture();
+  try {
+    await runner.start({ ...settings, completeMessage: "" }, session);
+    clients[0].notify("item/started", { threadId: "other-thread", turnId: "turn-1", item: { id: "foreign", type: "fileChange" } });
+    clients[0].notify("item/started", { turnId: "other-turn", item: { id: "stale", type: "fileChange" } });
+    assert.ok(!runner.snapshot().logs.some(log => log.role === "tool"));
+    clients[0].notify("item/started", { turnId: "turn-1", item: { id: "active", type: "fileChange" } });
+    clients[0].complete("turn-1");
+    const activity = runner.snapshot().logs.find(log => log.role === "tool");
+    assert.equal(activity.activityStatus, "ended");
+    assert.equal(runner.snapshot().phase, "paused");
   } finally { await runner.pause(); }
 });
 

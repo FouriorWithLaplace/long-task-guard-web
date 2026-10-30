@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { GuardLog, GuardRequest, GuardSettings, GuardSnapshot, SessionSummary } from "@/types/guard";
+import type { GuardActivityStatus, GuardLog, GuardRequest, GuardSettings, GuardSnapshot, SessionSummary } from "@/types/guard";
 import type { CodexConnection, CodexEvents } from "./codex-client";
 
 type MessageKind = "start" | "complete" | "retry";
@@ -17,6 +17,39 @@ function text(value: unknown): string {
   return "";
 }
 
+function briefProgress(message: string): string {
+  const firstLine = message.split("```", 1)[0].trim().split(/\r?\n/, 1)[0];
+  let summary = firstLine.replace(/^(?:#{1,6}\s+|[-*+]\s+|\d+[.)]\s+)/, "").replace(/\*\*|__|`/g, "").trim();
+  const sentenceEnd = summary.search(/[。！？]|[.!?](?=\s|$)/);
+  if (sentenceEnd >= 0) summary = summary.slice(0, sentenceEnd + 1);
+  if (summary.length > 160) summary = summary.slice(0, 160) + "…";
+  return summary;
+}
+
+function describeActivity(item: Record<string, unknown>): string {
+  if (item.type === "commandExecution") {
+    const descriptions = new Set<string>();
+    const actions = Array.isArray(item.commandActions) ? item.commandActions : [];
+    for (const value of actions) {
+      const action = record(value);
+      if (action.type === "read") descriptions.add("读取文件");
+      if (action.type === "listFiles") descriptions.add("浏览工程目录");
+      if (action.type === "search") descriptions.add("搜索代码");
+    }
+    if (descriptions.size > 0) return Array.from(descriptions).join("、");
+    return "执行命令";
+  }
+  if (item.type === "fileChange") return "修改文件";
+  if (item.type === "webSearch") return "搜索网页";
+  if (item.type === "mcpToolCall") return "调用外部工具";
+  if (item.type === "dynamicToolCall") return "调用工具";
+  if (item.type === "collabAgentToolCall") return "协作处理任务";
+  if (item.type === "imageView") return "查看图片";
+  if (item.type === "imageGeneration") return "生成图片";
+  if (item.type === "contextCompaction") return "整理上下文";
+  return "";
+}
+
 export class GuardRunner {
   private createConnection: ConnectionFactory;
   private connection: CodexConnection | null = null;
@@ -25,6 +58,7 @@ export class GuardRunner {
   private sending = false;
   private awaitingTurn = false;
   private finishedTurns = new Set<string>();
+  private summaryBuffers = new Map<string, string>();
   private nextLogId = 0;
   private listeners = new Set<(snapshot: GuardSnapshot) => void>();
   private notificationQueued = false;
@@ -95,6 +129,7 @@ export class GuardRunner {
     ++this.generation;
     this.cancelTimer();
     this.state.phase = "stopping";
+    this.endActivities("interrupted");
     this.state.requests = [];
     this.addLog("status", "system", "正在暂停，已取消后续自动发送。" );
     const connection = this.connection;
@@ -172,6 +207,7 @@ export class GuardRunner {
       },
       onDisconnect: (error) => {
         if (this.isCurrent(generation) && this.connection === connection) {
+          this.endActivities("interrupted");
           this.connection = null;
           this.state.turnId = null;
           this.addLog("error", "system", error.message);
@@ -203,6 +239,7 @@ export class GuardRunner {
     if (!this.isCurrent(generation) || this.sending) return;
     this.cancelTimer();
     this.sending = true;
+    this.summaryBuffers.clear();
     this.state.phase = "starting";
     this.state.nextMessage = null;
     this.changed();
@@ -241,6 +278,7 @@ export class GuardRunner {
       }
     } catch (error) {
       if (!this.isCurrent(generation) || this.state.nextMessage !== null) return;
+      this.endActivities("interrupted");
       this.connection?.close();
       this.connection = null;
       this.state.turnId = null;
@@ -283,23 +321,22 @@ export class GuardRunner {
       this.finishTurn(turn, generation);
     } else if (method === "item/agentMessage/delta") {
       this.updateItem(turnId + ":" + text(params.itemId), "assistant", text(params.delta), true);
-    } else if (method === "item/commandExecution/outputDelta") {
-      this.updateItem(turnId + ":" + text(params.itemId), "tool", text(params.delta), true);
+    } else if (method === "turn/plan/updated" && Array.isArray(params.plan)) {
+      this.updatePlan(turnId, params.plan);
+    } else if (method === "item/reasoning/summaryTextDelta") {
+      this.updateSummary(turnId, text(params.itemId), Number(params.summaryIndex), text(params.delta), true);
     } else if (method === "item/started" || method === "item/completed") {
       const item = record(params.item);
-      const key = turnId + ":" + text(item.id);
 
       if (item.type === "agentMessage" && method === "item/completed") {
+        const key = turnId + ":" + text(item.id);
         this.updateItem(key, "assistant", text(item.text), false);
-      } else if (item.type === "commandExecution") {
-        let output = "$ " + text(item.command);
-        if (typeof item.aggregatedOutput === "string") output += "\n" + item.aggregatedOutput;
-        if (method === "item/completed") output += "\n退出码：" + String(item.exitCode ?? "未知");
-        this.updateItem(key, "tool", output, false);
-      } else if (item.type === "fileChange" && method === "item/completed") {
-        const changes = Array.isArray(item.changes) ? item.changes : [];
-        const paths = changes.map(function getPath(change) { return text(record(change).path); });
-        this.updateItem(key, "tool", "文件修改：\n" + paths.join("\n"), false);
+      } else if (item.type === "reasoning" && method === "item/completed" && Array.isArray(item.summary)) {
+        for (let index = 0; index < item.summary.length; index++) {
+          this.updateSummary(turnId, text(item.id), index, text(item.summary[index]), false);
+        }
+      } else {
+        this.updateActivity(turnId, item, method === "item/completed");
       }
     } else if (method === "error") {
       if (params.willRetry === false) {
@@ -319,6 +356,9 @@ export class GuardRunner {
     if (!id || this.finishedTurns.has(id)) return;
     this.finishedTurns.add(id);
     if (this.finishedTurns.size > 1000) this.finishedTurns.delete(this.finishedTurns.values().next().value!);
+    let activityStatus: GuardActivityStatus = "ended";
+    if (turn.status !== "completed") activityStatus = "interrupted";
+    this.endActivities(activityStatus);
     this.state.turnId = null;
     this.awaitingTurn = false;
     this.state.requests = [];
@@ -432,5 +472,79 @@ export class GuardRunner {
     if (append) nextText = entry.text + message;
     entry.text = nextText.slice(-200000);
     this.changed();
+  }
+
+  private updateActivity(turnId: string, item: Record<string, unknown>, completed: boolean) {
+    const id = text(item.id);
+    const description = describeActivity(item);
+    if (!id || !description) return;
+
+    let status: GuardActivityStatus = "running";
+    if (completed) status = "completed";
+    if (item.status === "failed" || item.success === false) status = "failed";
+    if (typeof item.exitCode === "number" && item.exitCode !== 0) status = "failed";
+    if (item.status === "declined") status = "declined";
+    if (item.status === "interrupted") status = "interrupted";
+    this.updateProgress(turnId + ":activity:" + id, "tool", description, status);
+  }
+
+  private updateProgress(key: string, role: "assistant" | "tool", message: string, status?: GuardActivityStatus) {
+    if (!message) return;
+    let entry = this.state.logs.find(function match(log) { return log.itemKey === key; });
+    // 迟到的 started 不会把已经结束的同一操作重新标成进行中。
+    if (role === "tool" && entry?.activityStatus && entry.activityStatus !== "running" && status === "running") return;
+    if (!entry) {
+      entry = this.addLog("message", role, message);
+      entry.itemKey = key;
+    } else if (entry.text === message && entry.activityStatus === status) {
+      return;
+    }
+    entry.text = message;
+    entry.activityStatus = status;
+    this.changed();
+  }
+
+  private updatePlan(turnId: string, plan: unknown[]) {
+    const prefix = turnId + ":plan:";
+    const activeKeys = new Set<string>();
+    for (let index = 0; index < plan.length; index++) {
+      const step = record(plan[index]);
+      if (step.status !== "inProgress" && step.status !== "completed") continue;
+      const key = prefix + index;
+      activeKeys.add(key);
+      let status: GuardActivityStatus = "running";
+      if (step.status === "completed") status = "completed";
+      this.updateProgress(key, "assistant", briefProgress(text(step.step)), status);
+    }
+    for (const log of this.state.logs) {
+      if (log.itemKey?.startsWith(prefix) && log.activityStatus === "running" && !activeKeys.has(log.itemKey)) {
+        log.activityStatus = "ended";
+        this.changed();
+      }
+    }
+  }
+
+  private updateSummary(turnId: string, itemId: string, index: number, message: string, append: boolean) {
+    if (!itemId || !Number.isInteger(index) || index < 0) return;
+    const key = turnId + ":summary:" + itemId + ":" + index;
+    let buffer = message;
+    if (append) buffer = (this.summaryBuffers.get(key) ?? "") + message;
+    // 只暂存摘要开头；完整推理、后续详细说明不进入运行记录。
+    buffer = buffer.slice(0, 512);
+    this.summaryBuffers.set(key, buffer);
+    if (this.summaryBuffers.size > 500) this.summaryBuffers.delete(this.summaryBuffers.keys().next().value!);
+    this.updateProgress(key, "assistant", briefProgress(buffer));
+  }
+
+  private endActivities(status: "interrupted" | "ended") {
+    let updated = false;
+    for (const log of this.state.logs) {
+      if (log.activityStatus === "running") {
+        log.activityStatus = status;
+        updated = true;
+      }
+    }
+    this.summaryBuffers.clear();
+    if (updated) this.changed();
   }
 }

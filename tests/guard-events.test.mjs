@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createGuardEventStream } from "../src/server/guard-events.ts";
+import { GuardEventHub } from "../src/server/guard-event-hub.ts";
 
-function fixture() {
+function fixture(instanceId = "test") {
   const listeners = new Set();
-  let snapshot = { instanceId: "test", revision: 0, phase: "paused", logs: [] };
+  let snapshot = { instanceId, revision: 0, phase: "paused", logs: [] };
   const source = {
     snapshot() { return structuredClone(snapshot); },
     subscribe(listener) {
@@ -93,4 +94,53 @@ test("already-aborted requests do not subscribe or leave an open stream", async 
   const reader = createGuardEventStream(source, controller.signal).getReader();
   assert.equal((await reader.read()).done, true);
   assert.equal(listeners.size, 0);
+});
+
+test("existing SSE follows a replacement runner even when its revision is unchanged", { timeout: 3000 }, async function () {
+  const oldRunner = fixture("old-runner");
+  const nextRunner = fixture("new-runner");
+  const hub = new GuardEventHub(oldRunner.source);
+  const reader = createGuardEventStream(hub, new AbortController().signal).getReader();
+  try {
+    assert.equal(decode((await reader.read()).value).snapshot.instanceId, "old-runner");
+    hub.follow(nextRunner.source);
+    const replacement = decode((await reader.read()).value).snapshot;
+    assert.equal(replacement.instanceId, "new-runner");
+    assert.equal(replacement.revision, 0);
+    assert.equal(oldRunner.listeners.size, 0);
+    assert.equal(nextRunner.listeners.size, 1);
+
+    hub.follow(nextRunner.source);
+    assert.equal(nextRunner.listeners.size, 1);
+    oldRunner.emit(100);
+    nextRunner.emit(1);
+    const progress = decode((await reader.read()).value).snapshot;
+    assert.equal(progress.instanceId, "new-runner");
+    assert.equal(progress.logs[0].text, "Output 1");
+  } finally { await reader.cancel(); }
+
+  // 断开的网页不再收到数据，重连直接读取当前实例的最新状态。
+  nextRunner.emit(2);
+  const reconnected = createGuardEventStream(hub, new AbortController().signal).getReader();
+  try {
+    const latest = decode((await reconnected.read()).value).snapshot;
+    assert.equal(latest.instanceId, "new-runner");
+    assert.equal(latest.revision, 2);
+  } finally { await reconnected.cancel(); }
+});
+
+test("a slow existing SSE receives the newest progress after runner replacement", { timeout: 3000 }, async function () {
+  const oldRunner = fixture("old-runner");
+  const nextRunner = fixture("new-runner");
+  const hub = new GuardEventHub(oldRunner.source);
+  const reader = createGuardEventStream(hub, new AbortController().signal).getReader();
+  try {
+    oldRunner.emit(20);
+    hub.follow(nextRunner.source);
+    nextRunner.emit(1);
+    assert.equal(decode((await reader.read()).value).snapshot.instanceId, "old-runner");
+    const latest = decode((await reader.read()).value).snapshot;
+    assert.equal(latest.instanceId, "new-runner");
+    assert.equal(latest.revision, 1);
+  } finally { await reader.cancel(); }
 });

@@ -1,10 +1,10 @@
 import { connection } from "next/server";
-import { getGuardRunner } from "@/server/guard-service";
+import { getGuardEventSource } from "@/server/guard-service";
 import { createGuardEventStream } from "@/server/guard-events";
 
 export async function GET(request: Request) {
   await connection();
-  const stream = createGuardEventStream(getGuardRunner(), request.signal);
+  const stream = createGuardEventStream(getGuardEventSource(), request.signal);
 
   return new Response(stream, {
     headers: {

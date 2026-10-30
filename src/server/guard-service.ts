@@ -1,5 +1,6 @@
 import { CodexClient } from "@/server/codex-client";
 import { GuardRunner } from "@/server/guard-runner";
+import { GuardEventHub } from "@/server/guard-event-hub";
 import { findCodexExecutable, readCachedModelCatalog } from "@/server/model-catalog";
 import { discoverSessions } from "@/server/session-scanner";
 import type { GuardSettings } from "@/types/guard";
@@ -8,22 +9,35 @@ import type { GuardSettings } from "@/types/guard";
 const guardGlobal = globalThis as typeof globalThis & {
   longTaskGuardRunner?: GuardRunner;
   longTaskGuardVersion?: number;
+  longTaskGuardEvents?: GuardEventHub;
 };
 // 实例结构变化时递增；不同路由共享同一个实例，不通过类身份判断。
-const runnerVersion = 2;
+const runnerVersion = 4;
 
 export function getGuardRunner(): GuardRunner {
-  const existing = guardGlobal.longTaskGuardRunner;
+  let runner = guardGlobal.longTaskGuardRunner;
+  const version = guardGlobal.longTaskGuardVersion ?? 0;
   // 已暂停的旧实例可替换，让开发热更新后的下一次开始使用新业务逻辑。
-  if (!existing || (existing.snapshot().phase === "paused" && guardGlobal.longTaskGuardVersion !== runnerVersion)) {
-    const runner = new GuardRunner(function createConnection(cwd, events) {
+  // 旧路由仍可能有未结束的请求，不能让它把较新的实例换回旧版本。
+  if (!runner || (runner.snapshot().phase === "paused" && version < runnerVersion)) {
+    runner = new GuardRunner(function createConnection(cwd, events) {
       return new CodexClient(findCodexExecutable(), cwd, events);
     });
     guardGlobal.longTaskGuardRunner = runner;
     guardGlobal.longTaskGuardVersion = runnerVersion;
-    return runner;
   }
-  return existing;
+
+  if (!guardGlobal.longTaskGuardEvents) {
+    guardGlobal.longTaskGuardEvents = new GuardEventHub(runner);
+  } else {
+    guardGlobal.longTaskGuardEvents.follow(runner);
+  }
+  return runner;
+}
+
+export function getGuardEventSource(): GuardEventHub {
+  getGuardRunner();
+  return guardGlobal.longTaskGuardEvents!;
 }
 
 export async function startGuard(settings: GuardSettings) {

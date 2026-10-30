@@ -14,6 +14,7 @@ export interface GuardSettings {
 }
 
 export type GuardPhase = "paused" | "starting" | "running" | "waiting" | "needsInput" | "stopping";
+export type GuardActivityStatus = "running" | "completed" | "failed" | "declined" | "interrupted" | "ended";
 
 export interface GuardLog {
   id: number;
@@ -22,6 +23,7 @@ export interface GuardLog {
   role: "system" | "user" | "assistant" | "tool";
   text: string;
   itemKey?: string;
+  activityStatus?: GuardActivityStatus;
 }
 
 export interface GuardQuestion {

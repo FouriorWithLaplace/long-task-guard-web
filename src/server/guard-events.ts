@@ -1,13 +1,14 @@
-import type { GuardRunner } from "./guard-runner";
+import type { GuardEventSource } from "./guard-event-hub";
 import type { GuardSnapshot } from "@/types/guard";
 
-export function createGuardEventStream(runner: GuardRunner, signal: AbortSignal): ReadableStream<Uint8Array> {
+export function createGuardEventStream(source: GuardEventSource, signal: AbortSignal): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
   let controller: ReadableStreamDefaultController<Uint8Array>;
   let heartbeat: ReturnType<typeof setInterval>;
   let unsubscribe = function noSubscription() {};
   let stopped = false;
   let lastRevision = -1;
+  let lastInstanceId = "";
   let pending: GuardSnapshot | null = null;
 
   function cleanup() {
@@ -26,7 +27,8 @@ export function createGuardEventStream(runner: GuardRunner, signal: AbortSignal)
   }
 
   function sendSnapshot(snapshot: GuardSnapshot) {
-    if (stopped || snapshot.revision === lastRevision) return;
+    if (stopped) return;
+    if (snapshot.instanceId === lastInstanceId && snapshot.revision === lastRevision) return;
 
     // 页面读取较慢时只保留最新状态，避免积压大量完整日志。
     if (controller.desiredSize !== null && controller.desiredSize <= 0) {
@@ -38,6 +40,8 @@ export function createGuardEventStream(runner: GuardRunner, signal: AbortSignal)
     if (lastRevision === -1) frame = "retry: 2000\n" + frame;
     controller.enqueue(encoder.encode(frame));
     lastRevision = snapshot.revision;
+    lastInstanceId = snapshot.instanceId;
+    pending = null;
   }
 
   function keepAlive() {
@@ -55,10 +59,10 @@ export function createGuardEventStream(runner: GuardRunner, signal: AbortSignal)
         return;
       }
 
-      unsubscribe = runner.subscribe(sendSnapshot);
+      unsubscribe = source.subscribe(sendSnapshot);
       signal.addEventListener("abort", disconnect, { once: true });
       heartbeat = setInterval(keepAlive, 25000);
-      sendSnapshot(runner.snapshot());
+      sendSnapshot(source.snapshot());
     },
     pull() {
       if (pending !== null) {
