@@ -1,6 +1,6 @@
 import { connection } from "next/server";
 import { createGuard, getGuardManager } from "@/server/guard-service";
-import { checkGuardOrigin, guardErrorResponse, guardResponseHeaders, readGuardObject, readGuardSettings } from "@/server/guard-http";
+import { checkGuardOrigin, guardErrorResponse, guardResponseHeaders, readGuardObject, readGuardSettings, readNewSessionOptions } from "@/server/guard-http";
 
 export async function GET() {
   await connection();
@@ -12,7 +12,7 @@ export async function POST(request: Request) {
   if (rejected) return rejected;
   try {
     const body = readGuardObject(await request.json());
-    const guard = await createGuard(readGuardSettings(body.settings));
+    const guard = await createGuard(readGuardSettings(body.settings), readNewSessionOptions(body.newSession));
     return Response.json(guard, { status: 201, headers: guardResponseHeaders });
   } catch (error) {
     return guardErrorResponse(error);

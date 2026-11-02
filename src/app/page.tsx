@@ -25,7 +25,7 @@ export default function Home() {
             </span>
             <div className="mt-8">
               <h2 className="text-2xl font-bold">新建守护 <span aria-hidden="true" className="ml-2 inline-block transition group-hover:translate-x-1">→</span></h2>
-              <p className="mt-3 text-sm leading-6 text-blue-100">选择会话、配置消息，开始执行时完成创建。</p>
+              <p className="mt-3 text-sm leading-6 text-blue-100">关联已有会话或新建空白会话，填好消息即可开始。</p>
             </div>
           </Link>
         </div>

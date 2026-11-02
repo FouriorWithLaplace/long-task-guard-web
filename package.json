@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "node --test tests/model-catalog.test.mjs tests/codex-client.test.mjs tests/guard-runner.test.mjs tests/guard-events.test.mjs tests/guard-manager.test.mjs tests/guard-http.test.mjs"
+    "test": "node --test tests/model-catalog.test.mjs tests/codex-client.test.mjs tests/guard-runner.test.mjs tests/guard-events.test.mjs tests/guard-manager.test.mjs tests/guard-http.test.mjs tests/project-directory.test.mjs tests/project-picker.test.mjs tests/guard-service.test.mjs"
   },
   "dependencies": {
     "next": "16.4.3",

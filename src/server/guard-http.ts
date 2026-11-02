@@ -1,4 +1,4 @@
-import type { GuardSettings } from "@/types/guard";
+import type { GuardSettings, NewSessionOptions } from "@/types/guard";
 
 export const guardResponseHeaders = { "Cache-Control": "no-store" };
 
@@ -24,6 +24,15 @@ export function checkGuardOrigin(request: Request): Response | null {
 export function readGuardObject(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("请求内容必须是 JSON 对象。");
   return value as Record<string, unknown>;
+}
+
+export function readNewSessionOptions(value: unknown): NewSessionOptions | undefined {
+  if (value === undefined) return undefined;
+  const object = readGuardObject(value);
+  if (typeof object.projectPath !== "string" || !object.projectPath.trim()) {
+    throw new Error("新建会话需要填写工程目录。");
+  }
+  return { projectPath: object.projectPath };
 }
 
 export function readGuardSettings(value: unknown): GuardSettings {

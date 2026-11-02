@@ -24,6 +24,10 @@ export default function GuardEditor({ guardId = null }: { guardId?: string | nul
   });
 
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
+  const [sessionSource, setSessionSource] = useState<"new" | "existing">("new");
+  const [newProjectPath, setNewProjectPath] = useState("");
+  const [selectingProject, setSelectingProject] = useState(false);
+  const [projectError, setProjectError] = useState("");
   const [sessionsLoading, setSessionsLoading] = useState(true);
   const [sessionsError, setSessionsError] = useState("");
   const restoreSettings = useCallback(function restoreSettings(saved: GuardSettings) {
@@ -32,15 +36,52 @@ export default function GuardEditor({ guardId = null }: { guardId?: string | nul
   const { guard, loaded, missing, deleting, starting, pausing, error, start, pause, respond } = useGuard(guardId, restoreSettings);
   const active = guard.phase !== "paused";
   const locked = !loaded || deleting || active || starting || pausing;
+  const createNewSession = guardId === null && sessionSource === "new";
+  const pendingNewSession = guardId !== null && guard.settings?.sessionId === "";
+  const hasSessionTarget = createNewSession ? newProjectPath.trim() !== "" : settings.sessionId !== "" || pendingNewSession;
 
-  function handleStart() { void start(settings); }
+  const availableSessions = [...sessions];
+  const savedSessionId = guard.settings?.sessionId;
+  if (savedSessionId && !availableSessions.some(function match(session) { return session.id === savedSessionId; })) {
+    availableSessions.unshift({ id: savedSessionId, title: guard.sessionTitle, projectPath: guard.projectPath });
+  }
+
+  function handleStart() {
+    if (createNewSession) {
+      const newSettings = { ...settings, sessionId: "" };
+      void start(newSettings, { projectPath: newProjectPath });
+    } else {
+      void start(settings);
+    }
+  }
+  function selectNewSession() { setSessionSource("new"); }
+  function selectExistingSession() {
+    setSessionsLoading(true);
+    setSessionsError("");
+    setSessionSource("existing");
+  }
+  async function handleSelectProject() {
+    setSelectingProject(true);
+    setProjectError("");
+    try {
+      const response = await fetch("/api/project-directory", { method: "POST" });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "无法打开本地文件夹选择窗口。");
+      if (!data.cancelled && typeof data.projectPath === "string") setNewProjectPath(data.projectPath);
+    } catch (error) {
+      setProjectError(error instanceof Error ? error.message : "选择工程目录失败。");
+    } finally {
+      setSelectingProject(false);
+    }
+  }
   function handlePause() {
     if (guard.settings) restoreSettings(guard.settings);
     void pause();
   }
 
-  // 页面在浏览器中挂载后读取会话，刷新页面也会重新执行。
+  // 空白模式不依赖已有会话，也不要求本机已经生成会话数据库。
   useEffect(function loadSessionsOnMount() {
+    if (guardId === null && sessionSource === "new") return;
     const controller = new AbortController();
 
     async function loadSessions() {
@@ -92,10 +133,10 @@ export default function GuardEditor({ guardId = null }: { guardId?: string | nul
     void loadSessions();
 
     return cancelLoading;
-  }, []);
+  }, [guardId, sessionSource]);
 
   let sessionPlaceholder = "请选择会话";
-  let sessionStatus = "找到 " + sessions.length + " 个可用会话";
+  let sessionStatus = "找到 " + availableSessions.length + " 个可用会话";
 
   if (sessionsLoading) {
     sessionPlaceholder = "正在扫描本机会话…";
@@ -103,14 +144,15 @@ export default function GuardEditor({ guardId = null }: { guardId?: string | nul
   } else if (sessionsError !== "") {
     sessionPlaceholder = "读取失败，请刷新页面重试";
     sessionStatus = "未能读取会话列表";
-  } else if (sessions.length === 0) {
+  } else if (availableSessions.length === 0) {
     sessionPlaceholder = "暂无可用会话";
-    sessionStatus = "暂无可用会话，请先在 Codex 中创建会话后刷新页面";
+    sessionStatus = "暂无已有会话，可以选择新建空白会话。";
   }
+  if (pendingNewSession) sessionPlaceholder = "尚未绑定，开始时自动新建会话";
 
   let projectPath = guard.projectPath || "尚未选择会话";
 
-  for (const session of sessions) {
+  for (const session of availableSessions) {
     if (session.id === settings.sessionId) {
       projectPath = session.projectPath;
       break;
@@ -198,7 +240,7 @@ export default function GuardEditor({ guardId = null }: { guardId?: string | nul
               {guardId === null ? "新建守护" : guard.sessionTitle || "守护详情"}
             </h1>
             <p className="mt-2 text-sm text-slate-500">
-              {guardId === null ? "选择会话并配置发送内容，点击开始守护后完成创建。" : "查看和管理这个守护，离开页面后仍会继续执行。"}
+              {guardId === null ? "关联已有会话，或直接新建空白会话；填好消息后点击开始守护。" : "查看和管理这个守护，离开页面后仍会继续执行。"}
             </p>
           </div>
 
@@ -215,40 +257,58 @@ export default function GuardEditor({ guardId = null }: { guardId?: string | nul
               会话
             </h2>
             <p className="mt-1 text-sm text-slate-500">
-              选择需要守护的已有会话，开始前请确认工程目录。
+              {guardId === null ? "可以继续已有对话，也可以在指定工程中从空白对话开始。" : "当前守护绑定的会话与工程目录。"}
             </p>
           </div>
 
-          <label
-            htmlFor="session"
-            className="mb-2 block text-sm font-medium text-slate-700"
-          >
-            当前会话
-          </label>
+          {guardId === null && (
+            <fieldset disabled={locked} className="mb-5">
+              <legend className="mb-2 text-sm font-medium text-slate-700">会话来源</legend>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-slate-200 p-4 has-checked:border-blue-500 has-checked:bg-blue-50">
+                  <input type="radio" name="session-source" value="new" checked={sessionSource === "new"} onChange={selectNewSession} className="mt-1 accent-blue-600" />
+                  <span><span className="block text-sm font-semibold">新建空白会话</span><span className="mt-1 block text-xs leading-5 text-slate-500">开始执行时自动创建并绑定，无需先打开 Codex。</span></span>
+                </label>
+                <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-slate-200 p-4 has-checked:border-blue-500 has-checked:bg-blue-50">
+                  <input type="radio" name="session-source" value="existing" checked={sessionSource === "existing"} onChange={selectExistingSession} className="mt-1 accent-blue-600" />
+                  <span><span className="block text-sm font-semibold">关联已有会话</span><span className="mt-1 block text-xs leading-5 text-slate-500">沿用已有会话的上下文和工程目录。</span></span>
+                </label>
+              </div>
+            </fieldset>
+          )}
 
-          <SessionPicker
-            sessions={sessions}
-            value={settings.sessionId}
-            onChange={handleSessionChange}
-            placeholder={sessionPlaceholder}
-            disabled={locked || sessionsLoading || sessionsError !== "" || sessions.length === 0}
-          />
-
-          <p role="status" className="mt-2 text-sm text-slate-500">
-            {sessionStatus}
-          </p>
-          <p role="alert" className="mt-2 text-sm text-red-600">
-            {sessionsError}
-          </p>
-
-          <div className="mt-4 rounded-xl bg-slate-50 px-4 py-3">
-            <p className="text-xs font-medium text-slate-500">
-              工程目录
-            </p>
-            <p className="mt-1 break-all font-mono text-sm text-slate-700">
-              {projectPath}
-            </p>
-          </div>
+          {createNewSession ? (
+            <div>
+              <p className="mb-2 text-sm font-medium text-slate-700">工程目录</p>
+              <div className="flex flex-wrap items-center gap-3">
+                <button type="button" onClick={handleSelectProject} disabled={locked || selectingProject} aria-describedby="project-path-hint" className="rounded-xl border border-slate-200 px-4 py-3 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-40">
+                  {selectingProject ? "正在选择…" : "选择工程文件夹"}
+                </button>
+                <p role="status" className="break-all font-mono text-sm text-slate-700">{newProjectPath || "尚未选择文件夹"}</p>
+              </div>
+              <p id="project-path-hint" className="mt-2 text-xs leading-5 text-slate-500">打开本机文件夹选择窗口。选择目录不会创建会话；点击开始守护后才创建并发送首次消息。</p>
+              {projectError && <p role="alert" className="mt-2 text-sm text-red-600">{projectError}</p>}
+            </div>
+          ) : (
+            <>
+              <label htmlFor="session" className="mb-2 block text-sm font-medium text-slate-700">当前会话</label>
+              <SessionPicker
+                sessions={availableSessions}
+                value={settings.sessionId}
+                onChange={handleSessionChange}
+                placeholder={sessionPlaceholder}
+                disabled={locked || sessionsLoading || sessionsError !== "" || availableSessions.length === 0}
+              />
+              <p role="status" className="mt-2 text-sm text-slate-500">{sessionStatus}</p>
+              <p role="alert" className="mt-2 text-sm text-red-600">{pendingNewSession ? "" : sessionsError}</p>
+              <div className="mt-4 rounded-xl bg-slate-50 px-4 py-3">
+                <p className="text-xs font-medium text-slate-500">工程目录</p>
+                <p className="mt-1 break-all font-mono text-sm text-slate-700">{projectPath}</p>
+              </div>
+              {pendingNewSession && <p role="status" className="mt-3 text-sm text-slate-500">尚未绑定 Codex 会话。开始后将自动创建；成功绑定后，暂停、重试和再次开始都会沿用同一会话。</p>}
+              {pendingNewSession && guard.phase === "needsInput" && <p role="alert" className="mt-3 text-sm text-amber-700">新建会话结果尚未确认，为避免重复创建，已停止自动重试。请先暂停并检查已有会话，再选择关联或重新开始。</p>}
+            </>
+          )}
         </section>
 
         {/* 执行设置 */}
@@ -351,7 +411,7 @@ export default function GuardEditor({ guardId = null }: { guardId?: string | nul
             <button
               type="button"
               onClick={handleStart}
-              disabled={!loaded || locked || !settings.sessionId || !settings.model || !settings.reasoning || !settings.startMessage.trim()}
+              disabled={!loaded || locked || selectingProject || !hasSessionTarget || !settings.model || !settings.reasoning || !settings.startMessage.trim()}
               className="rounded-xl bg-blue-600 px-6 py-3 text-sm font-semibold text-white transition hover:bg-blue-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 disabled:cursor-not-allowed disabled:opacity-40"
             >
               开始守护

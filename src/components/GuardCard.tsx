@@ -37,7 +37,7 @@ export default function GuardCard({ guard, selected, disabled, onToggle, onOpera
         <div className="mt-4"><GuardStatus guard={guard} /></div>
         <dl className="mt-4 space-y-2 text-xs leading-5">
           <div className="flex gap-2"><dt className="shrink-0 text-slate-400">模型</dt><dd className="break-all text-slate-700">{guard.settings?.model} · {guard.settings?.reasoning}</dd></div>
-          <div className="flex gap-2"><dt className="shrink-0 text-slate-400">会话</dt><dd className="truncate text-slate-500" title={guard.settings?.sessionId}>{guard.settings?.sessionId}</dd></div>
+          <div className="flex gap-2"><dt className="shrink-0 text-slate-400">会话</dt><dd className="truncate text-slate-500" title={guard.settings?.sessionId}>{guard.settings?.sessionId || "等待新建会话"}</dd></div>
           <div className="flex gap-2"><dt className="shrink-0 text-slate-400">目录</dt><dd className="truncate text-slate-500" title={guard.projectPath}>{guard.projectPath}</dd></div>
         </dl>
       </header>

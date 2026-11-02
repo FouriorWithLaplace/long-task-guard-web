@@ -39,15 +39,32 @@ function fixture(options = {}) {
   const runner = new GuardRunner(function createConnection(cwd, events) {
     assert.equal(cwd, session.projectPath);
     const client = {
-      events, closed: false,
+      events, closed: false, threadId: settings.sessionId,
       async initialize() {
         calls.push({ method: "initialize" });
+        if (options.initializeFailures > 0) {
+          options.initializeFailures--;
+          throw new Error("Simulated initialization failure");
+        }
         if (options.initialize) await options.initialize.promise;
       },
       async request(method, params) {
         calls.push({ method, params });
+        if (method === "thread/start") {
+          if (options.creationResponse) await options.creationResponse.promise;
+          if (options.creationDisconnect) {
+            client.closed = true;
+            events.onDisconnect(new Error("Disconnected while creating a session"));
+            throw new Error("Disconnected while creating a session");
+          }
+          if (options.creationError) throw new Error(options.creationError);
+          if (options.missingSessionId) return { thread: {} };
+          client.threadId = "created-thread";
+          return { thread: { id: client.threadId, status: { type: "idle" } } };
+        }
         if (method === "thread/resume") {
-          return { thread: { id: settings.sessionId, status: { type: options.busy ? "active" : "idle" } } };
+          client.threadId = params.threadId;
+          return { thread: { id: params.threadId, status: { type: options.busy ? "active" : "idle" } } };
         }
         if (method === "turn/start") {
           if (options.startFailures > 0) {
@@ -69,7 +86,7 @@ function fixture(options = {}) {
       respond(id, result) { calls.push({ method: "response", id, result }); },
       rejectRequest(id, message) { calls.push({ method: "rejection", id, message }); },
       close() { client.closed = true; },
-      notify(method, params) { events.onNotification(method, { threadId: settings.sessionId, ...params }); },
+      notify(method, params) { events.onNotification(method, { threadId: client.threadId, ...params }); },
       complete(id, status = "completed") { client.notify("turn/completed", { turn: { id, status } }); },
     };
     clients.push(client);
@@ -80,6 +97,102 @@ function fixture(options = {}) {
     starts() { return calls.filter(function (call) { return call.method === "turn/start"; }); },
   };
 }
+
+test("a blank guard creates and binds one session before sending the first prompt and always resumes it afterwards", async function (t) {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
+  const { runner, calls, clients, starts } = fixture();
+  const blankSettings = { ...settings, sessionId: "" };
+  const blankSession = { ...session, id: "", title: "New session" };
+  try {
+    assert.equal(clients.length, 0);
+    await runner.start(blankSettings, blankSession);
+    const created = calls.find(function create(call) { return call.method === "thread/start"; });
+    assert.deepEqual(created.params, { cwd: session.projectPath, model: settings.model, approvalPolicy: "never", sandbox: "danger-full-access" });
+    assert.equal(runner.snapshot().settings.sessionId, "created-thread");
+    assert.equal(blankSettings.sessionId, "");
+    assert.equal(starts()[0].params.threadId, "created-thread");
+    assert.equal(starts()[0].params.input[0].text, settings.startMessage);
+    clients[0].notify("item/agentMessage/delta", { turnId: "turn-1", itemId: "new-progress", delta: "New session progress" });
+    assert.ok(runner.snapshot().logs.some(function progress(log) { return log.text === "New session progress"; }));
+    clients[0].complete("turn-1");
+    t.mock.timers.tick(0); await settle();
+    assert.equal(starts()[1].params.threadId, "created-thread");
+    clients[0].events.onDisconnect(new Error("Test disconnect"));
+    t.mock.timers.tick(0); await settle();
+    assert.equal(starts()[2].params.threadId, "created-thread");
+    await runner.pause();
+    await runner.start(runner.snapshot().settings, { ...session, id: "created-thread" });
+    assert.equal(starts()[3].params.threadId, "created-thread");
+    assert.equal(calls.filter(function create(call) { return call.method === "thread/start"; }).length, 1);
+    const resumes = calls.filter(function resume(call) { return call.method === "thread/resume"; });
+    assert.ok(resumes.every(function sameSession(call) { return call.params.threadId === "created-thread"; }));
+  } finally { await runner.pause(); }
+});
+
+test("initialization retries before session creation still send the original task prompt", async function (t) {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
+  const { runner, calls, starts } = fixture({ initializeFailures: 1 });
+  try {
+    await runner.start({ ...settings, sessionId: "" }, { ...session, id: "" });
+    assert.equal(runner.snapshot().phase, "waiting");
+    assert.equal(starts().length, 0);
+    t.mock.timers.tick(0); await settle();
+    assert.equal(runner.snapshot().settings.sessionId, "created-thread");
+    assert.equal(starts()[0].params.input[0].text, settings.startMessage);
+    assert.equal(calls.filter(function create(call) { return call.method === "thread/start"; }).length, 1);
+  } finally { await runner.pause(); }
+});
+
+test("unconfirmed session creation waits for the user without automatically creating duplicates", async function (t) {
+  const cases = [{ creationError: "Creation request timed out" }, { creationDisconnect: true }, { missingSessionId: true }];
+  for (const options of cases) {
+    await t.test(JSON.stringify(options), async function verify(t) {
+      t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
+      const { runner, calls, starts, clients } = fixture(options);
+      try {
+        await runner.start({ ...settings, sessionId: "" }, { ...session, id: "" });
+        assert.equal(runner.snapshot().phase, "needsInput");
+        assert.equal(runner.snapshot().settings.sessionId, "");
+        assert.equal(runner.snapshot().nextMessage, null);
+        t.mock.timers.tick(60000); await settle();
+        assert.equal(calls.filter(function create(call) { return call.method === "thread/start"; }).length, 1);
+        assert.equal(starts().length, 0);
+        assert.ok(clients.every(function closed(client) { return client.closed; }));
+      } finally { await runner.pause(); }
+    });
+  }
+});
+
+test("pausing before initialization completes does not create a blank session", async function () {
+  const initialize = deferred();
+  const { runner, calls, starts } = fixture({ initialize });
+  const starting = runner.start({ ...settings, sessionId: "" }, { ...session, id: "" });
+  await runner.pause();
+  initialize.resolve();
+  await starting;
+  assert.equal(runner.snapshot().phase, "paused");
+  assert.equal(starts().length, 0);
+  assert.ok(!calls.some(function create(call) { return call.method === "thread/start"; }));
+});
+
+test("a late creation response may bind the paused guard but cannot send a prompt or overwrite a newer run", async function (t) {
+  for (const restart of [false, true]) {
+    await t.test("restart: " + restart, async function verify() {
+      const creationResponse = deferred();
+      const { runner, starts } = fixture({ creationResponse });
+      const starting = runner.start({ ...settings, sessionId: "" }, { ...session, id: "" });
+      await settle();
+      await runner.pause();
+      if (restart) await runner.start(settings, session);
+      creationResponse.resolve();
+      await starting;
+      assert.equal(runner.snapshot().settings.sessionId, restart ? settings.sessionId : "created-thread");
+      assert.equal(starts().length, restart ? 1 : 0);
+      if (!restart) assert.equal(runner.snapshot().phase, "paused");
+      await runner.pause();
+    });
+  }
+});
 
 test("resumes selected session, sends selected model/effort, merges real streamed replies", async function () {
   const { runner, clients, calls, starts } = fixture();

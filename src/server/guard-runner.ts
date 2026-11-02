@@ -57,6 +57,7 @@ export class GuardRunner {
   private generation = 0;
   private sending = false;
   private awaitingTurn = false;
+  private creatingSession = false;
   private finishedTurns = new Set<string>();
   private summaryBuffers = new Map<string, string>();
   private nextLogId = 0;
@@ -75,6 +76,17 @@ export class GuardRunner {
 
   snapshot(): GuardSnapshot {
     return structuredClone(this.state);
+  }
+
+  restorePaused(snapshot: GuardSnapshot): void {
+    if (snapshot.phase !== "paused" || this.state.settings || this.connection) {
+      throw new Error("只能将已暂停的记录恢复到空守护实例。");
+    }
+    this.state = structuredClone(snapshot);
+    this.state.turnId = null;
+    this.state.nextMessage = null;
+    this.state.requests = [];
+    this.nextLogId = Math.max(0, ...snapshot.logs.map(function logId(log) { return log.id; }));
   }
 
   subscribe(listener: (snapshot: GuardSnapshot) => void): () => void {
@@ -114,6 +126,7 @@ export class GuardRunner {
     // 新一轮有独立的 generation，不能被旧一轮的发送标记挡住。
     this.sending = false;
     this.awaitingTurn = false;
+    this.creatingSession = false;
     this.state.runId++;
     this.state.settings = { ...settings };
     this.state.sessionTitle = session.title;
@@ -227,8 +240,12 @@ export class GuardRunner {
           this.endActivities("interrupted");
           this.connection = null;
           this.state.turnId = null;
-          this.addLog("error", "system", error.message);
-          this.scheduleNext("retry", generation);
+          if (this.creatingSession && !this.state.settings?.sessionId) {
+            this.waitForSessionConfirmation(error.message);
+          } else {
+            this.addLog("error", "system", error.message);
+            this.scheduleNext("retry", generation);
+          }
         }
       },
     });
@@ -236,15 +253,35 @@ export class GuardRunner {
     await connection.initialize();
     if (!this.isCurrent(generation)) throw new Error("守护已暂停。" );
 
-    const result = record(await connection.request("thread/resume", {
-      threadId: settings.sessionId,
-      cwd: this.state.projectPath,
-      model: settings.model,
-      approvalPolicy: "never",
-      sandbox: "danger-full-access",
-      excludeTurns: true,
-    }));
-    const thread = record(result.thread);
+    let thread: Record<string, unknown>;
+    if (!settings.sessionId) {
+      this.creatingSession = true;
+      const result = record(await connection.request("thread/start", {
+        cwd: this.state.projectPath,
+        model: settings.model,
+        approvalPolicy: "never",
+        sandbox: "danger-full-access",
+      }));
+      thread = record(result.thread);
+      const sessionId = text(thread.id);
+      if (!sessionId) throw new Error("Codex 没有返回新会话 ID。");
+      // 暂停后晚到的响应仍可保存已知 ID，但不能覆盖另一次开始的配置。
+      if (this.state.settings !== settings) throw new Error("守护配置已变化，忽略旧的新建会话响应。");
+      settings.sessionId = sessionId;
+      this.creatingSession = false;
+      this.state.sessionTitle = text(thread.name) || briefProgress(settings.startMessage).slice(0, 80) || "新会话";
+      this.addLog("status", "system", "已创建并绑定 Codex 会话：" + sessionId);
+    } else {
+      const result = record(await connection.request("thread/resume", {
+        threadId: settings.sessionId,
+        cwd: this.state.projectPath,
+        model: settings.model,
+        approvalPolicy: "never",
+        sandbox: "danger-full-access",
+        excludeTurns: true,
+      }));
+      thread = record(result.thread);
+    }
 
     if (thread.id !== settings.sessionId) throw new Error("Codex 恢复的会话与选择的会话不一致。" );
     if (record(thread.status).type === "active") {
@@ -252,6 +289,14 @@ export class GuardRunner {
     }
 
     return connection;
+  }
+
+  private waitForSessionConfirmation(message: string): void {
+    if (this.state.phase === "needsInput") return;
+    this.cancelTimer();
+    this.state.nextMessage = null;
+    this.state.phase = "needsInput";
+    this.addLog("error", "system", "新建会话的结果尚未确认，已停止自动重试以避免重复创建。请暂停后检查已有会话，再选择关联或重新开始。原因：" + message);
   }
 
   private async sendMessage(kind: MessageKind, generation: number) {
@@ -264,12 +309,13 @@ export class GuardRunner {
     this.changed();
 
     try {
+      const needsFirstMessage = !this.state.settings?.sessionId;
       const connection = await this.connect(generation);
       if (!this.isCurrent(generation)) return;
       const settings = this.state.settings!;
       let message = settings.startMessage;
-      if (kind === "complete") message = settings.completeMessage;
-      if (kind === "retry") message = settings.retryMessage;
+      if (!needsFirstMessage && kind === "complete") message = settings.completeMessage;
+      if (!needsFirstMessage && kind === "retry") message = settings.retryMessage;
 
       this.awaitingTurn = true;
       this.state.phase = "running";
@@ -305,6 +351,10 @@ export class GuardRunner {
       this.state.turnId = null;
       let message = "Codex 执行中断。";
       if (error instanceof Error) message = error.message;
+      if (this.creatingSession && !this.state.settings?.sessionId) {
+        this.waitForSessionConfirmation(message);
+        return;
+      }
       this.addLog("error", "system", message);
       this.scheduleNext("retry", generation);
     } finally {

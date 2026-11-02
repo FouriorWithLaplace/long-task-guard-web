@@ -25,12 +25,19 @@ function fixture(options = {}) {
   const clients = [];
   const runners = [];
   let turnNumber = 0;
+  let sessionNumber = 0;
   const manager = new GuardManager(function createRunner() {
     const runner = new GuardRunner(function createConnection(_cwd, events) {
       const client = {
         closed: false, threadId: "", turnId: "", interrupts: 0, events: events,
         async initialize() { if (options.initialize) await options.initialize.promise; },
         async request(method, params) {
+          if (method === "thread/start") {
+            const threadId = "new-thread-" + ++sessionNumber;
+            if (options.creationResponse) await options.creationResponse.promise;
+            client.threadId = threadId;
+            return { thread: { id: threadId, status: { type: "idle" } } };
+          }
           if (method === "thread/resume") {
             client.threadId = params.threadId;
             return { thread: { id: params.threadId, status: { type: "idle" } } };
@@ -83,6 +90,56 @@ test("independent guards run concurrently and their messages and pause state sta
     assert.equal(restarted.logs.at(-1).text, first.settings.startMessage);
   } finally {
     await Promise.all([manager.remove(one.id), manager.remove(two.id)]);
+  }
+});
+
+test("hot reload replaces only paused legacy runners, preserves their records and creates the missing session", async function () {
+  const { manager, runners, clients } = fixture();
+  const blank = task("");
+  const created = await manager.create(blank.settings, blank.session);
+  await manager.pause(created.id);
+  const paused = manager.get(created.id);
+  paused.settings.sessionId = "";
+  // 模拟热更新前类的实例：方法相同，但 prototype 与新类不同。
+  Object.setPrototypeOf(runners[0], Object.create(GuardRunner.prototype));
+  // 旧实现未创建会话的快照。
+  runners[0].snapshot = function snapshot() { return structuredClone(paused); };
+  const active = task("active-thread");
+  const running = await manager.create(active.settings, active.session);
+  Object.setPrototypeOf(runners[1], Object.create(GuardRunner.prototype));
+  let replacements = 0;
+  function createRunner() {
+    replacements++;
+    return new GuardRunner(function createConnection(cwd, events) {
+      return {
+        async initialize() {}, close() {}, respond() {}, rejectRequest() {},
+        async request(method, params) {
+          if (method === "thread/start") return { thread: { id: "newly-bound", status: { type: "idle" } } };
+          if (method === "turn/start") {
+            assert.equal(params.threadId, "newly-bound");
+            return { turn: { id: "new-turn", status: "inProgress" } };
+          }
+          if (method === "turn/interrupt") return {};
+          throw new Error("Unexpected method: " + method);
+        },
+      };
+    });
+  }
+  GuardManager.refreshPausedRunners(manager, createRunner, GuardRunner.prototype);
+  assert.equal(replacements, 1);
+  assert.deepEqual(manager.get(created.id), paused);
+  assert.equal(manager.get(running.id).phase, "running");
+  assert.equal(clients[1].closed, false);
+  GuardManager.refreshPausedRunners(manager, createRunner, GuardRunner.prototype);
+  assert.equal(replacements, 1);
+  try {
+    const restarted = await manager.start(created.id, paused.settings, blank.session);
+    assert.equal(restarted.settings.sessionId, "newly-bound");
+    assert.deepEqual(restarted.logs.slice(0, paused.logs.length), paused.logs);
+    assert.ok(restarted.logs[paused.logs.length].id > paused.logs.at(-1).id);
+  } finally {
+    await manager.remove(created.id);
+    await manager.remove(running.id);
   }
 });
 
@@ -178,6 +235,41 @@ test("failed pause retains the guard, clears deleting state, and permits a later
   runners[0].pause = originalPause;
   await manager.remove(created.id);
   assert.equal(manager.snapshot().guards.length, 0);
+});
+
+test("blank guards can create independent sessions concurrently and reserve each bound session", async function () {
+  const { manager, clients } = fixture();
+  const selected = task("");
+  const [one, two] = await Promise.all([manager.create(selected.settings, selected.session), manager.create(selected.settings, selected.session)]);
+  try {
+    assert.notEqual(one.id, two.id);
+    assert.notEqual(one.settings.sessionId, two.settings.sessionId);
+    assert.ok(one.settings.sessionId);
+    assert.ok(two.settings.sessionId);
+    assert.equal(one.phase, "running");
+    assert.equal(two.phase, "running");
+    const sameSession = { ...selected.session, id: one.settings.sessionId };
+    await assert.rejects(manager.create(one.settings, sameSession), { status: 409 });
+    await manager.pause(one.id);
+    await manager.start(one.id, one.settings, sameSession);
+    assert.equal(clients.at(-1).threadId, one.settings.sessionId);
+    assert.equal(manager.get(two.id).phase, "running");
+  } finally { await Promise.all([manager.remove(one.id), manager.remove(two.id)]); }
+});
+
+test("deleting while a new session is being created never sends a late task prompt", async function () {
+  const creationResponse = deferred();
+  const { manager, clients } = fixture({ creationResponse });
+  const selected = task("");
+  const creating = manager.create(selected.settings, selected.session);
+  await settle();
+  const id = manager.snapshot().guards[0].id;
+  await manager.remove(id);
+  creationResponse.resolve();
+  await assert.rejects(creating, { status: 404 });
+  assert.equal(manager.snapshot().guards.length, 0);
+  assert.equal(clients[0].closed, true);
+  assert.equal(clients[0].turnId, "");
 });
 
 test("one SSE connection observes all guards, removal, and reconnect without starting work", { timeout: 3000 }, async function () {

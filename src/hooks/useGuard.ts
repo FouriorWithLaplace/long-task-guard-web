@@ -3,7 +3,7 @@
 import { useCallback, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useGuards } from "@/hooks/useGuards";
-import type { GuardCollectionSnapshot, GuardSettings, GuardSnapshot, ManagedGuardSnapshot } from "@/types/guard";
+import type { GuardCollectionSnapshot, GuardSettings, GuardSnapshot, ManagedGuardSnapshot, NewSessionOptions } from "@/types/guard";
 
 const emptySnapshot: GuardSnapshot = {
   instanceId: "", revision: -1, runId: 0, phase: "paused", settings: null,
@@ -30,7 +30,9 @@ export function useGuard(guardId: string | null, onRestoreSettings: (settings: G
   const acceptSnapshot = useCallback(function acceptSnapshot(snapshot: ManagedGuardSnapshot) {
     const previous = latest.current;
     if (snapshot.instanceId === previous.instanceId && snapshot.revision < previous.revision) return;
-    if (snapshot.settings !== null && (previous.instanceId !== snapshot.instanceId || previous.runId !== snapshot.runId)) {
+    const changedRun = previous.instanceId !== snapshot.instanceId || previous.runId !== snapshot.runId;
+    const changedSession = previous.settings?.sessionId !== snapshot.settings?.sessionId;
+    if (snapshot.settings !== null && (changedRun || changedSession)) {
       onRestoreSettings(snapshot.settings);
     }
     latest.current = snapshot;
@@ -58,12 +60,12 @@ export function useGuard(guardId: string | null, onRestoreSettings: (settings: G
     return data;
   }
 
-  async function start(settings: GuardSettings) {
+  async function start(settings: GuardSettings, newSession?: NewSessionOptions) {
     if (startingRef.current) return;
     startingRef.current = true;
     setStarting(true);
     try {
-      const created = await sendAction({ action: "start", settings: settings });
+      const created = await sendAction({ action: "start", settings: settings, newSession: newSession });
       if (guardId === null) router.replace("/guards/" + encodeURIComponent(created.id));
     } catch (failure) {
       setError(errorMessage(failure));

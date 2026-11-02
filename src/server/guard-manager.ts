@@ -34,6 +34,22 @@ export class GuardManager implements GuardEventSource<GuardCollectionSnapshot> {
     this.createRunner = createRunner;
   }
 
+  // 开发热更新保留 manager；仅替换已暂停的旧实现，保留 ID、配置和日志。
+  static refreshPausedRunners(manager: GuardManager, createRunner: () => GuardRunner, prototype: object): void {
+    manager.createRunner = createRunner;
+    for (const entry of manager.entries.values()) {
+      if (Object.getPrototypeOf(entry.runner) === prototype || entry.deleting) continue;
+      const snapshot = entry.runner.snapshot();
+      if (snapshot.phase !== "paused") continue;
+      const runner = createRunner();
+      runner.restorePaused(snapshot);
+      entry.unsubscribe();
+      entry.runner = runner;
+      entry.unsubscribe = runner.subscribe(manager.changed.bind(manager));
+      manager.changed();
+    }
+  }
+
   snapshot(): GuardCollectionSnapshot {
     const guards: ManagedGuardSnapshot[] = [];
     for (const entry of this.entries.values()) guards.push(this.entrySnapshot(entry));
@@ -132,6 +148,8 @@ export class GuardManager implements GuardEventSource<GuardCollectionSnapshot> {
   }
 
   private assertSessionAvailable(sessionId: string, exceptId?: string): void {
+    // 空 ID 表示尚未创建会话；多个新守护可以分别创建自己的会话。
+    if (!sessionId) return;
     for (const entry of this.entries.values()) {
       if (entry.id === exceptId) continue;
       const snapshot = entry.runner.snapshot();
