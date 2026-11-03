@@ -180,7 +180,10 @@ export class CodexClient implements CodexConnection {
       if (pending.timeout !== null) clearTimeout(pending.timeout);
 
       if (message.error) {
-        pending.reject(new Error(message.error.message || "Codex 请求失败。"));
+        const failure = new Error(message.error.message || "Codex 请求失败。");
+        // 保留服务端的结构化错误，守护可据此识别上游 HTTP 状态码。
+        Object.assign(failure, { data: message.error.data });
+        pending.reject(failure);
       } else {
         pending.resolve(message.result);
       }

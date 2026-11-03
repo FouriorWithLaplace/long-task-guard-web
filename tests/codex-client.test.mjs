@@ -63,6 +63,15 @@ test("stdio client: handshake, notifications, server requests and closing pendin
     child.stdout.write(JSON.stringify({ id: sent.at(-1).id, error: { message: "resume failed" } }) + "\n");
     await assert.rejects(failed, /resume failed/);
 
+    const oversized = client.request("turn/start", { threadId: "test" });
+    const errorData = { codexErrorInfo: { httpConnectionFailed: { httpStatusCode: 413 } } };
+    child.stdout.write(JSON.stringify({ id: sent.at(-1).id, error: { message: "Provider rejected request", data: errorData } }) + "\n");
+    await assert.rejects(oversized, function preservesData(error) {
+      assert.equal(error.message, "Provider rejected request");
+      assert.deepEqual(error.data, errorData);
+      return true;
+    });
+
     t.mock.timers.enable({ apis: ["setTimeout"] });
     const recovering = client.request("turn/start", { threadId: "test" });
     const recoveringId = sent.at(-1).id;

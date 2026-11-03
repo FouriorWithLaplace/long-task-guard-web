@@ -17,6 +17,25 @@ function text(value: unknown): string {
   return "";
 }
 
+function isPayloadTooLarge(value: unknown): boolean {
+  const error = record(value);
+  // JSON-RPC 请求错误的结构化信息放在 data 中，轮次错误则直接携带这些字段。
+  const sources = [error, record(error.data)];
+  for (const source of sources) {
+    if (source.httpStatusCode === 413) return true;
+    const info = record(source.codexErrorInfo);
+    for (const detail of Object.values(info)) {
+      if (record(detail).httpStatusCode === 413) return true;
+    }
+
+    const message = text(source.message) + "\n" + text(source.additionalDetails);
+    const hasStatus = /\b(?:http|status(?:\s+code)?)\s*[:=]?\s*413\b/i.test(message);
+    const hasSizeError = /\b(?:payload|request entity|content) too large\b|\brequest body exceeds (?:the )?configured limit\b/i.test(message);
+    if (hasStatus || hasSizeError) return true;
+  }
+  return false;
+}
+
 function briefProgress(message: string): string {
   const firstLine = message.split("```", 1)[0].trim().split(/\r?\n/, 1)[0];
   let summary = firstLine.replace(/^(?:#{1,6}\s+|[-*+]\s+|\d+[.)]\s+)/, "").replace(/\*\*|__|`/g, "").trim();
@@ -58,6 +77,7 @@ export class GuardRunner {
   private sending = false;
   private awaitingTurn = false;
   private creatingSession = false;
+  private awaitingRecoverySuccess = false;
   private finishedTurns = new Set<string>();
   private summaryBuffers = new Map<string, string>();
   private nextLogId = 0;
@@ -127,6 +147,7 @@ export class GuardRunner {
     this.sending = false;
     this.awaitingTurn = false;
     this.creatingSession = false;
+    this.awaitingRecoverySuccess = false;
     this.state.runId++;
     this.state.settings = { ...settings };
     this.state.sessionTitle = session.title;
@@ -345,6 +366,11 @@ export class GuardRunner {
       }
     } catch (error) {
       if (!this.isCurrent(generation) || this.state.nextMessage !== null) return;
+      // 创建结果不明时仍走原来的等待确认流程，不能反复创建会话。
+      if (!this.creatingSession && isPayloadTooLarge(error)) {
+        this.recoverFromPayloadTooLarge(generation);
+        return;
+      }
       this.endActivities("interrupted");
       this.connection?.close();
       this.connection = null;
@@ -394,6 +420,12 @@ export class GuardRunner {
 
     if (!turnId || turnId !== this.state.turnId) return;
 
+    // 413 无法靠重发同一个超大请求解决，即使 Codex 标记 willRetry 也切换会话。
+    if (method === "error" && isPayloadTooLarge(params.error)) {
+      this.recoverFromPayloadTooLarge(generation);
+      return;
+    }
+
     const resumedOutput = method === "item/agentMessage/delta" || method === "item/reasoning/summaryTextDelta";
     if (this.state.phase === "reconnecting" && (resumedOutput || method === "item/started" || method === "turn/plan/updated")) {
       this.state.phase = "running";
@@ -441,6 +473,10 @@ export class GuardRunner {
   private finishTurn(turn: Record<string, unknown>, generation: number) {
     const id = text(turn.id);
     if (!id || this.finishedTurns.has(id)) return;
+    if (turn.status !== "completed" && isPayloadTooLarge(turn.error)) {
+      this.recoverFromPayloadTooLarge(generation);
+      return;
+    }
     this.finishedTurns.add(id);
     if (this.finishedTurns.size > 1000) this.finishedTurns.delete(this.finishedTurns.values().next().value!);
     let activityStatus: GuardActivityStatus = "ended";
@@ -451,6 +487,7 @@ export class GuardRunner {
     this.state.requests = [];
 
     if (turn.status === "completed") {
+      this.awaitingRecoverySuccess = false;
       this.addLog("status", "system", "本轮执行完成。" );
       this.scheduleNext("complete", generation);
     } else {
@@ -458,6 +495,38 @@ export class GuardRunner {
       this.addLog("error", "system", error || "本轮执行中断。" );
       this.scheduleNext("retry", generation);
     }
+  }
+
+  private recoverFromPayloadTooLarge(generation: number): void {
+    if (!this.isCurrent(generation)) return;
+    const settings = this.state.settings!;
+    const previousSessionId = settings.sessionId;
+    const connection = this.connection;
+
+    // 先让旧回调失效。旧 turn/start 即使随后返回或拒绝，也不能影响新会话。
+    const recoveryGeneration = ++this.generation;
+    this.cancelTimer();
+    this.connection = null;
+    connection?.close();
+    this.sending = false;
+    this.awaitingTurn = false;
+    this.creatingSession = false;
+    this.finishedTurns.clear();
+    this.endActivities("interrupted");
+    this.state.turnId = null;
+    this.state.requests = [];
+
+    if (this.awaitingRecoverySuccess) {
+      this.state.phase = "needsInput";
+      this.addLog("error", "system", "新会话尚未成功完成一轮就再次遇到 413（请求体过大），已停止自动换会话。请检查开始消息、附件或中转站请求体限制；调整后暂停并重新开始。");
+      return;
+    }
+
+    this.awaitingRecoverySuccess = true;
+    this.state.settings = { ...settings, sessionId: "" };
+    this.state.sessionTitle = "待创建会话";
+    this.addLog("status", "system", "遇到 413（请求体过大），正在从会话 " + previousSessionId + " 切换到新会话；绑定后重新发送开始消息。旧会话已保留。");
+    void this.sendMessage("start", recoveryGeneration);
   }
 
   private scheduleNext(kind: "complete" | "retry", generation: number) {

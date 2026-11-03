@@ -36,6 +36,7 @@ function fixture(options = {}) {
   const clients = [];
   const calls = [];
   let turnCounter = 0;
+  let sessionCounter = 0;
   const runner = new GuardRunner(function createConnection(cwd, events) {
     assert.equal(cwd, session.projectPath);
     const client = {
@@ -59,7 +60,8 @@ function fixture(options = {}) {
           }
           if (options.creationError) throw new Error(options.creationError);
           if (options.missingSessionId) return { thread: {} };
-          client.threadId = "created-thread";
+          sessionCounter++;
+          client.threadId = sessionCounter === 1 ? "created-thread" : "created-thread-" + sessionCounter;
           return { thread: { id: client.threadId, status: { type: "idle" } } };
         }
         if (method === "thread/resume") {
@@ -69,12 +71,15 @@ function fixture(options = {}) {
         if (method === "turn/start") {
           if (options.startFailures > 0) {
             options.startFailures--;
-            throw new Error("Simulated send failure");
+            throw options.startError || new Error("Simulated send failure");
           }
           const turn = { id: "turn-" + ++turnCounter, status: "inProgress" };
           if (!options.noStarted) client.notify("turn/started", { turn });
           if (options.earlyCompletion) client.complete(turn.id);
           if (options.startResponse) await options.startResponse.promise;
+          if (options.startResultError && turnCounter === 1) {
+            return { turn: { ...turn, status: "failed", error: options.startResultError } };
+          }
           return { turn };
         }
         if (method === "turn/interrupt") {
@@ -525,6 +530,213 @@ test("reconnecting before start acknowledgement is tracked and pause cancels it"
     startResponse.resolve();
     await starting;
     await runner.pause();
+  }
+});
+
+const payloadTooLarge = { message: "unexpected status 413 Payload Too Large: request body exceeds the configured limit," };
+
+test("413 replaces the bound session once, sends the recovery prompt and resumes ordinary follow-ups", async function (t) {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const { runner, clients, starts, calls } = fixture();
+  try {
+    await runner.start(settings, session);
+    const original = runner.snapshot();
+    clients[0].notify("item/started", { turnId: "turn-1", item: { id: "tool", type: "commandExecution" } });
+    clients[0].events.onRequest(9, "item/tool/requestUserInput", { threadId: settings.sessionId, questions: [] });
+    clients[0].notify("error", { turnId: "turn-1", willRetry: true, error: payloadTooLarge });
+    clients[0].notify("error", { turnId: "turn-1", willRetry: false, error: payloadTooLarge });
+    clients[0].complete("turn-1", "failed");
+    clients[0].events.onDisconnect(new Error("Late disconnect"));
+    await settle();
+
+    const recovered = runner.snapshot();
+    assert.equal(recovered.instanceId, original.instanceId);
+    assert.equal(recovered.runId, original.runId);
+    assert.deepEqual(recovered.settings, { ...settings, sessionId: "created-thread" });
+    assert.equal(recovered.projectPath, session.projectPath);
+    assert.equal(recovered.requests.length, 0);
+    assert.equal(recovered.logs.find(function activity(log) { return log.role === "tool"; }).activityStatus, "interrupted");
+    assert.ok(recovered.logs.some(function originalId(log) { return log.text.includes(settings.sessionId); }));
+    assert.ok(recovered.logs.some(function newId(log) { return log.text.includes("created-thread"); }));
+    assert.equal(clients[0].closed, true);
+    assert.equal(clients.length, 2);
+    assert.equal(calls.filter(function creation(call) { return call.method === "thread/start"; }).length, 1);
+    assert.deepEqual(starts()[1].params, { ...starts()[0].params, threadId: "created-thread" });
+
+    clients[1].complete("turn-2");
+    t.mock.timers.tick(0); await settle();
+    assert.equal(starts()[2].params.input[0].text, settings.completeMessage);
+    clients[1].complete("turn-3", "failed");
+    t.mock.timers.tick(0); await settle();
+    assert.equal(starts()[3].params.input[0].text, settings.retryMessage);
+    assert.equal(starts()[3].params.threadId, "created-thread");
+  } finally { await runner.pause(); }
+});
+
+test("413 is recognized in structured notifications, terminal events and request failures", async function (t) {
+  const cases = [
+    { name: "structured notification", error: { message: "Provider rejected request", codexErrorInfo: { httpConnectionFailed: { httpStatusCode: 413 } } } },
+    { name: "additional details", error: { message: "Request failed", additionalDetails: "HTTP status: 413" } },
+    { name: "terminal event", terminal: true, error: payloadTooLarge },
+    { name: "terminal response", options: { startResultError: payloadTooLarge } },
+    { name: "request text", options: { startFailures: 1, startError: new Error(payloadTooLarge.message) } },
+    { name: "request data", options: { startFailures: 1, startError: Object.assign(new Error("Request failed"), { data: { codexErrorInfo: { responseStreamConnectionFailed: { httpStatusCode: 413 } } } }) } },
+  ];
+  for (const scenario of cases) {
+    await t.test(scenario.name, async function verify() {
+      const { runner, clients, starts } = fixture(scenario.options);
+      try {
+        await runner.start(settings, session);
+        if (scenario.terminal) {
+          clients[0].notify("turn/completed", { turn: { id: "turn-1", status: "failed", error: scenario.error } });
+        } else if (scenario.error) {
+          clients[0].notify("error", { turnId: "turn-1", willRetry: false, error: scenario.error });
+        }
+        await settle();
+        assert.equal(runner.snapshot().settings.sessionId, "created-thread");
+        assert.equal(clients.length, 2);
+        assert.equal(starts().at(-1).params.input[0].text, settings.startMessage);
+      } finally { await runner.pause(); }
+    });
+  }
+});
+
+test("unrelated errors, foreign threads, old turns and assistant text never trigger a session switch", async function (t) {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const { runner, clients, calls } = fixture();
+  try {
+    await runner.start(settings, session);
+    clients[0].notify("item/agentMessage/delta", { turnId: "turn-1", itemId: "reply", delta: payloadTooLarge.message });
+    clients[0].notify("error", { threadId: "another-thread", turnId: "turn-1", error: payloadTooLarge });
+    clients[0].notify("error", { turnId: "old-turn", error: payloadTooLarge });
+    clients[0].notify("error", { turnId: "turn-1", willRetry: true, error: { message: "File 413 could not be read" } });
+    assert.equal(runner.snapshot().phase, "reconnecting");
+    clients[0].notify("error", { turnId: "turn-1", willRetry: false, error: { message: "unexpected status 503 Service Unavailable" } });
+    t.mock.timers.tick(0); await settle();
+    assert.equal(runner.snapshot().settings.sessionId, settings.sessionId);
+    assert.equal(calls.filter(function creation(call) { return call.method === "thread/start"; }).length, 0);
+  } finally { await runner.pause(); }
+});
+
+test("another 413 before a successful recovery turn waits for input without creating more sessions", async function (t) {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const { runner, clients, starts, calls } = fixture();
+  try {
+    await runner.start(settings, session);
+    clients[0].notify("error", { turnId: "turn-1", error: payloadTooLarge });
+    await settle();
+    // A partial reply is not proof that the recovery turn can complete successfully.
+    clients[1].notify("item/agentMessage/delta", { turnId: "turn-2", itemId: "reply", delta: "Working" });
+    clients[1].notify("error", { turnId: "turn-2", willRetry: true, error: payloadTooLarge });
+    clients[1].complete("turn-2");
+    clients[1].events.onDisconnect(new Error("Late disconnect"));
+    t.mock.timers.tick(120000); await settle();
+    const stopped = runner.snapshot();
+    assert.equal(stopped.phase, "needsInput");
+    assert.equal(stopped.nextMessage, null);
+    assert.equal(stopped.settings.sessionId, "created-thread");
+    assert.match(stopped.logs.at(-1).text, /413/);
+    assert.equal(starts().length, 2);
+    assert.ok(clients.every(function closed(client) { return client.closed; }));
+    assert.equal(calls.filter(function creation(call) { return call.method === "thread/start"; }).length, 1);
+    await runner.pause();
+    await runner.start(stopped.settings, { ...session, id: "created-thread" });
+    assert.equal(starts().at(-1).params.threadId, "created-thread");
+    assert.equal(starts().at(-1).params.input[0].text, settings.startMessage);
+  } finally { await runner.pause(); }
+});
+
+test("a successful recovery turn permits another session switch when history grows again", async function (t) {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const { runner, clients, starts } = fixture();
+  try {
+    await runner.start(settings, session);
+    clients[0].notify("error", { turnId: "turn-1", error: payloadTooLarge });
+    await settle();
+    clients[1].complete("turn-2");
+    t.mock.timers.tick(0); await settle();
+    clients[1].notify("error", { turnId: "turn-3", error: payloadTooLarge });
+    await settle();
+    assert.equal(runner.snapshot().settings.sessionId, "created-thread-2");
+    assert.equal(starts().at(-1).params.input[0].text, settings.startMessage);
+    assert.equal(clients.length, 3);
+  } finally { await runner.pause(); }
+});
+
+test("413 before start acknowledgement recovers immediately and a late response cannot overwrite the new turn", async function () {
+  const startResponse = deferred();
+  const options = { startResponse, noStarted: true };
+  const { runner, clients, starts } = fixture(options);
+  const starting = runner.start(settings, session);
+  try {
+    await settle();
+    options.startResponse = null;
+    clients[0].notify("error", { turnId: "turn-1", willRetry: true, error: payloadTooLarge });
+    await settle();
+    assert.equal(starts().length, 2);
+    assert.equal(runner.snapshot().turnId, "turn-2");
+    startResponse.resolve();
+    await starting;
+    assert.equal(runner.snapshot().turnId, "turn-2");
+    assert.equal(runner.snapshot().settings.sessionId, "created-thread");
+    assert.equal(runner.snapshot().phase, "running");
+  } finally { startResponse.resolve(); await starting; await runner.pause(); }
+});
+
+test("pause during recovery initialization prevents creation and a late creation result cannot restart a paused guard", async function (t) {
+  for (const stage of ["initialize", "creationResponse"]) {
+    await t.test(stage, async function verify() {
+      const pending = deferred();
+      const options = {};
+      const { runner, clients, calls, starts } = fixture(options);
+      try {
+        await runner.start(settings, session);
+        options[stage] = pending;
+        clients[0].notify("error", { turnId: "turn-1", error: payloadTooLarge });
+        await settle();
+        await runner.pause();
+        pending.resolve();
+        await settle();
+        assert.equal(runner.snapshot().phase, "paused");
+        assert.equal(starts().length, 1);
+        assert.ok(clients.every(function closed(client) { return client.closed; }));
+        const creations = calls.filter(function creation(call) { return call.method === "thread/start"; });
+        assert.equal(creations.length, stage === "initialize" ? 0 : 1);
+        if (stage === "creationResponse") assert.equal(runner.snapshot().settings.sessionId, "created-thread");
+      } finally { pending.resolve(); await runner.pause(); }
+    });
+  }
+});
+
+test("uncertain recovery creation never loops, while pre-creation connection failure retries the recovery prompt", async function (t) {
+  const cases = [
+    { creationError: payloadTooLarge.message },
+    { creationDisconnect: true },
+    { missingSessionId: true },
+    { initializeFailures: 1 },
+  ];
+  for (const failure of cases) {
+    await t.test(JSON.stringify(failure), async function verify(t) {
+      t.mock.timers.enable({ apis: ["setTimeout"] });
+      const options = {};
+      const { runner, clients, calls, starts } = fixture(options);
+      try {
+        await runner.start(settings, session);
+        Object.assign(options, failure);
+        clients[0].notify("error", { turnId: "turn-1", error: payloadTooLarge });
+        await settle();
+        t.mock.timers.tick(120000); await settle();
+        assert.equal(calls.filter(function creation(call) { return call.method === "thread/start"; }).length, 1);
+        if (failure.initializeFailures) {
+          assert.equal(runner.snapshot().settings.sessionId, "created-thread");
+          assert.equal(starts()[1].params.input[0].text, settings.startMessage);
+        } else {
+          assert.equal(runner.snapshot().phase, "needsInput");
+          assert.equal(runner.snapshot().nextMessage, null);
+          assert.equal(starts().length, 1);
+        }
+      } finally { await runner.pause(); }
+    });
   }
 });
 

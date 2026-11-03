@@ -93,6 +93,58 @@ test("independent guards run concurrently and their messages and pause state sta
   }
 });
 
+test("413 rebinds only the affected guard, publishes its new session and updates session ownership", async function () {
+  const { manager, clients } = fixture();
+  const first = task("one");
+  const second = task("two");
+  const one = await manager.create(first.settings, first.session);
+  const two = await manager.create(second.settings, second.session);
+  const updates = [];
+  const unsubscribe = manager.subscribe(function receive(snapshot) { updates.push(snapshot); });
+  let reused;
+  try {
+    clients[0].notify("error", { willRetry: true, error: { message: "unexpected status 413 Payload Too Large" } });
+    await settle();
+    const recovered = manager.get(one.id);
+    assert.equal(recovered.settings.sessionId, "new-thread-1");
+    assert.equal(recovered.id, one.id);
+    assert.deepEqual(manager.get(two.id), two);
+    assert.equal(clients[1].closed, false);
+    assert.ok(updates.some(function published(snapshot) {
+      return snapshot.guards.some(function rebound(guard) {
+        return guard.id === one.id && guard.settings.sessionId === "new-thread-1";
+      });
+    }));
+    const newSession = { ...first.session, id: recovered.settings.sessionId };
+    await assert.rejects(manager.create(recovered.settings, newSession), { status: 409 });
+    reused = await manager.create(first.settings, first.session);
+    assert.equal(reused.settings.sessionId, "one");
+  } finally {
+    unsubscribe();
+    await manager.remove(one.id);
+    await manager.remove(two.id);
+    if (reused) await manager.remove(reused.id);
+  }
+});
+
+test("deleting during 413 recovery prevents late creation from sending or restoring the guard", async function () {
+  const creationResponse = deferred();
+  const options = {};
+  const { manager, clients } = fixture(options);
+  const selected = task("one");
+  const guard = await manager.create(selected.settings, selected.session);
+  options.creationResponse = creationResponse;
+  clients[0].notify("error", { error: { message: "unexpected status 413 Payload Too Large" } });
+  await settle();
+  assert.equal(clients.length, 2);
+  await manager.remove(guard.id);
+  creationResponse.resolve();
+  await settle();
+  assert.equal(manager.snapshot().guards.length, 0);
+  assert.equal(clients[1].closed, true);
+  assert.equal(clients[1].turnId, "");
+});
+
 test("hot reload replaces only paused legacy runners, preserves their records and creates the missing session", async function () {
   const { manager, runners, clients } = fixture();
   const blank = task("");
