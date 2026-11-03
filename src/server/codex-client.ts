@@ -17,9 +17,11 @@ export interface CodexConnection {
 }
 
 interface PendingRequest {
+  method: string;
+  threadId: unknown;
   resolve: (result: unknown) => void;
   reject: (error: Error) => void;
-  timeout: ReturnType<typeof setTimeout>;
+  timeout: ReturnType<typeof setTimeout> | null;
 }
 
 // 每个守护任务只管理自己创建的 app-server，不连接或关闭其他 Codex 窗口。
@@ -68,7 +70,8 @@ export class CodexClient implements CodexConnection {
       };
 
       const timeout = setTimeout(expire, timeoutMs);
-      this.pending.set(id, { resolve: resolve, reject: reject, timeout: timeout });
+      const threadId = (params as Record<string, unknown>).threadId;
+      this.pending.set(id, { method, threadId, resolve, reject, timeout });
 
       try {
         this.send({ id: id, method: method, params: params });
@@ -97,7 +100,7 @@ export class CodexClient implements CodexConnection {
     this.lines.close();
 
     for (const pending of this.pending.values()) {
-      clearTimeout(pending.timeout);
+      if (pending.timeout !== null) clearTimeout(pending.timeout);
       pending.reject(new Error("Codex 连接已关闭。"));
     }
 
@@ -142,6 +145,26 @@ export class CodexClient implements CodexConnection {
       if (typeof message.method === "string") {
         const params = message.params || {};
 
+        if (message.method === "error" && params.willRetry === true && typeof params.threadId === "string") {
+          // Codex 已接受本轮并正在内部重连，等待响应、最终失败或断开；不要用请求超时打断重连。
+          for (const pending of this.pending.values()) {
+            if (pending.method === "turn/start" && pending.threadId === params.threadId && pending.timeout !== null) {
+              clearTimeout(pending.timeout);
+              pending.timeout = null;
+            }
+          }
+        }
+
+        if (message.method === "turn/completed" && typeof params.turn?.id === "string") {
+          // 已收到最终轮次结果时，无需再等待可能缺失的开始响应。
+          for (const [id, pending] of this.pending) {
+            if (pending.method === "turn/start" && pending.threadId === params.threadId && pending.timeout === null) {
+              this.pending.delete(id);
+              pending.resolve({ turn: params.turn });
+            }
+          }
+        }
+
         if (typeof message.id === "string" || typeof message.id === "number") {
           this.events.onRequest(message.id, message.method, params);
         } else {
@@ -154,7 +177,7 @@ export class CodexClient implements CodexConnection {
       const pending = this.pending.get(String(message.id));
       if (!pending) return;
       this.pending.delete(String(message.id));
-      clearTimeout(pending.timeout);
+      if (pending.timeout !== null) clearTimeout(pending.timeout);
 
       if (message.error) {
         pending.reject(new Error(message.error.message || "Codex 请求失败。"));

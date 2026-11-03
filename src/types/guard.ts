@@ -17,7 +17,7 @@ export interface NewSessionOptions {
   projectPath: string;
 }
 
-export type GuardPhase = "paused" | "starting" | "running" | "waiting" | "needsInput" | "stopping";
+export type GuardPhase = "paused" | "starting" | "running" | "reconnecting" | "waiting" | "needsInput" | "stopping";
 export type GuardActivityStatus = "running" | "completed" | "failed" | "declined" | "interrupted" | "ended";
 
 export interface GuardLog {

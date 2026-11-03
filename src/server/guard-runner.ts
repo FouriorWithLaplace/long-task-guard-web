@@ -380,6 +380,12 @@ export class GuardRunner {
     const turn = record(params.turn);
     const turnId = text(params.turnId) || text(turn.id);
 
+    // 重连通知可能先于 turn/started 和 turn/start 的响应到达。
+    if (method === "error" && turnId && this.awaitingTurn && !this.finishedTurns.has(turnId)) {
+      this.state.turnId = turnId;
+      this.awaitingTurn = false;
+    }
+
     if (method === "turn/started" && this.awaitingTurn && !this.finishedTurns.has(turnId)) {
       this.state.turnId = turnId;
       this.awaitingTurn = false;
@@ -387,6 +393,12 @@ export class GuardRunner {
     }
 
     if (!turnId || turnId !== this.state.turnId) return;
+
+    const resumedOutput = method === "item/agentMessage/delta" || method === "item/reasoning/summaryTextDelta";
+    if (this.state.phase === "reconnecting" && (resumedOutput || method === "item/started" || method === "turn/plan/updated")) {
+      this.state.phase = "running";
+      this.addLog("status", "system", "重连成功，继续当前轮次。");
+    }
 
     if (method === "turn/completed") {
       this.finishTurn(turn, generation);
@@ -416,6 +428,10 @@ export class GuardRunner {
         this.connection = null;
         this.finishTurn({ id: turnId, status: "failed", error: params.error }, generation);
       } else {
+        if (params.willRetry === true) {
+          this.state.phase = "reconnecting";
+          this.addLog("status", "system", "Codex 正在重连，等待重连结束后再继续操作。");
+        }
         this.addLog("error", "system", text(record(params.error).message) || "Codex 执行异常。" );
         // Codex 仍在自行重试时，本轮没有结束，不叠加新的消息。
       }

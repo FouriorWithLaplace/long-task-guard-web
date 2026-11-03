@@ -63,10 +63,39 @@ test("stdio client: handshake, notifications, server requests and closing pendin
     child.stdout.write(JSON.stringify({ id: sent.at(-1).id, error: { message: "resume failed" } }) + "\n");
     await assert.rejects(failed, /resume failed/);
 
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const recovering = client.request("turn/start", { threadId: "test" });
+    const recoveringId = sent.at(-1).id;
+    let recoverySettled = false;
+    recovering.then(function resolved() { recoverySettled = true; }, function rejected() { recoverySettled = true; });
+    child.stdout.write(JSON.stringify({ method: "error", params: { threadId: "test", turnId: "turn-1", willRetry: true } }) + "\n");
+    t.mock.timers.tick(120000);
+    await Promise.resolve();
+    assert.equal(recoverySettled, false);
+    child.stdout.write(JSON.stringify({ id: recoveringId, result: { turn: { id: "turn-1" } } }) + "\n");
+    assert.deepEqual(await recovering, { turn: { id: "turn-1" } });
+
+    const completedDuringReconnect = client.request("turn/start", { threadId: "test" });
+    child.stdout.write(JSON.stringify({ method: "error", params: { threadId: "test", turnId: "turn-2", willRetry: true } }) + "\n");
+    const finishedTurn = { id: "turn-2", status: "failed" };
+    child.stdout.write(JSON.stringify({ method: "turn/completed", params: { threadId: "test", turn: finishedTurn } }) + "\n");
+    assert.deepEqual(await completedDuringReconnect, { turn: finishedTurn });
+
+    // A different thread's reconnect must not disable this request's timeout.
+    const unrelated = client.request("turn/start", { threadId: "other" });
+    const unrelatedRejected = assert.rejects(unrelated, /turn\/start/);
+    child.stdout.write(JSON.stringify({ method: "error", params: { threadId: "test", willRetry: true } }) + "\n");
+    t.mock.timers.tick(30000);
+    await unrelatedRejected;
+
     const pending = client.request("turn/start", {});
     const rejected = assert.rejects(pending);
+    const reconnecting = client.request("turn/start", { threadId: "test" });
+    const reconnectingRejected = assert.rejects(reconnecting);
+    child.stdout.write(JSON.stringify({ method: "error", params: { threadId: "test", willRetry: true } }) + "\n");
     client.close();
     await rejected;
+    await reconnectingRejected;
     assert.equal(killed, true);
     assert.equal(disconnects.length, 0);
     await assert.rejects(client.request("turn/start", {}));

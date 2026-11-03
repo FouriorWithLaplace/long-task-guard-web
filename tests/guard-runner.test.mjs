@@ -462,6 +462,72 @@ test("normal completion and failure continue immediately; duplicate events do no
   } finally { await runner.pause(); }
 });
 
+test("reconnecting waits without sending and successful recovery continues the same turn", async function (t) {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const { runner, clients, starts } = fixture();
+  try {
+    await runner.start(settings, session);
+    clients[0].notify("error", { turnId: "turn-1", willRetry: true, error: { message: "Reconnecting... 1/5" } });
+    assert.equal(runner.snapshot().phase, "reconnecting");
+    t.mock.timers.tick(120000); await settle();
+    assert.equal(clients[0].closed, false);
+    assert.equal(clients.length, 1);
+    assert.equal(starts().length, 1);
+    assert.equal(runner.snapshot().nextMessage, null);
+    clients[0].notify("item/agentMessage/delta", { turnId: "turn-1", itemId: "recovered", delta: "Resumed" });
+    assert.equal(runner.snapshot().phase, "running");
+    assert.equal(runner.snapshot().turnId, "turn-1");
+    assert.equal(starts().length, 1);
+    clients[0].complete("turn-1");
+    t.mock.timers.tick(0); await settle();
+    assert.equal(starts().length, 2);
+    assert.equal(starts()[1].params.input[0].text, settings.completeMessage);
+  } finally { await runner.pause(); }
+});
+
+test("reconnecting only retries after final failure and ignores late events", async function (t) {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const { runner, clients, starts } = fixture();
+  try {
+    await runner.start(settings, session);
+    clients[0].notify("error", { turnId: "turn-1", willRetry: true });
+    t.mock.timers.tick(120000); await settle();
+    assert.equal(starts().length, 1);
+    clients[0].notify("error", { turnId: "turn-1", willRetry: false });
+    clients[0].complete("turn-1", "failed");
+    t.mock.timers.tick(0); await settle();
+    assert.equal(clients[0].closed, true);
+    assert.equal(starts().length, 2);
+    assert.equal(starts()[1].params.input[0].text, settings.retryMessage);
+  } finally { await runner.pause(); }
+});
+
+test("reconnecting before start acknowledgement is tracked and pause cancels it", async function (t) {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const startResponse = deferred();
+  const { runner, clients, starts } = fixture({ startResponse, noStarted: true });
+  const starting = runner.start(settings, session);
+  try {
+    await settle();
+    clients[0].notify("error", { turnId: "turn-1", willRetry: true });
+    assert.equal(runner.snapshot().phase, "reconnecting");
+    assert.equal(runner.snapshot().turnId, "turn-1");
+    startResponse.resolve();
+    await starting;
+    assert.equal(runner.snapshot().phase, "reconnecting");
+    await runner.pause();
+    clients[0].notify("error", { turnId: "turn-1", willRetry: false });
+    t.mock.timers.tick(120000); await settle();
+    assert.equal(runner.snapshot().phase, "paused");
+    assert.equal(clients[0].closed, true);
+    assert.equal(starts().length, 1);
+  } finally {
+    startResponse.resolve();
+    await starting;
+    await runner.pause();
+  }
+});
+
 test("pause interrupts active turn and late completion cannot restart the guard", async function (t) {
   t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
   const { runner, clients, calls, starts } = fixture();

@@ -7,6 +7,7 @@ export default function GuardStatus({ guard }: { guard: GuardSnapshot }) {
   let dotClass = "bg-slate-400";
   if (guard.phase === "starting") label = "正在启动";
   if (guard.phase === "running") label = "正在执行";
+  if (guard.phase === "reconnecting") label = "正在重连";
   if (guard.phase === "needsInput") label = "等待你的操作";
   if (guard.phase === "stopping") label = "正在暂停";
   if (guard.phase !== "paused") dotClass = "bg-blue-500";
