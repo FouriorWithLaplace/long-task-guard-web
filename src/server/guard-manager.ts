@@ -66,6 +66,11 @@ export class GuardManager implements GuardEventSource<GuardCollectionSnapshot> {
     return this.entrySnapshot(this.find(id));
   }
 
+  terminalTarget(id: string) {
+    // 热更新前的执行实例仍可继续工作；它在下一次暂停并开始时升级。
+    return this.findAvailable(id).runner.terminalTarget?.() ?? null;
+  }
+
   // 接管开发热更新前的单守护实例，保留它的连接和执行状态。
   adopt(runner: GuardRunner): void {
     this.add(runner);

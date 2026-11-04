@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { GuardActivityStatus, GuardLog, GuardRequest, GuardSettings, GuardSnapshot, SessionSummary } from "@/types/guard";
-import type { CodexConnection, CodexEvents } from "./codex-client";
+import type { CodexConnection, CodexEvents, CodexTerminalTarget } from "./codex-client";
 
 type MessageKind = "start" | "complete" | "retry";
 type ConnectionFactory = (cwd: string, events: CodexEvents) => CodexConnection;
@@ -96,6 +96,13 @@ export class GuardRunner {
 
   snapshot(): GuardSnapshot {
     return structuredClone(this.state);
+  }
+
+  terminalTarget(): (CodexTerminalTarget & { sessionId: string }) | null {
+    const sessionId = this.state.settings?.sessionId;
+    const target = this.connection?.terminalTarget?.();
+    if (!sessionId || !target || this.state.phase === "paused" || this.state.phase === "stopping") return null;
+    return { ...target, sessionId };
   }
 
   restorePaused(snapshot: GuardSnapshot): void {

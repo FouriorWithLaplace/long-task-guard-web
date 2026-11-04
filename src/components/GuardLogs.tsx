@@ -138,7 +138,7 @@ export default function GuardLogs({ logs, compact = false }: { logs: GuardLog[];
     if (log.id <= clearedThrough) continue;
     if (log.role === "tool" && !log.activityStatus) continue;
     if (filter !== "all" && log.kind !== filter) continue;
-    const summary = summarizeProgress(log.text);
+    const summary = compact ? summarizeProgress(log.text) : log.text;
     if (summary !== "") visible.push({ ...log, text: summary });
   }
 

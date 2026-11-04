@@ -21,8 +21,15 @@
 | DELETE | `/api/guards/:id` | 先暂停，再删除；成功返回 204 |
 | POST | `/api/guards/bulk` | 批量开始、暂停、删除 |
 | GET | `/api/guards/events` | SSE，`snapshot` 事件携带完整列表快照 |
+| POST | `/api/guards/:id/terminal` | 打开只读原生终端显示，或调整其尺寸 |
+| GET | `/api/guards/:id/terminal?viewer=<viewerId>` | SSE，传输终端初始画面和原始输出 |
+| DELETE | `/api/guards/:id/terminal` | 关闭指定显示进程，不暂停守护 |
 
 每个守护快照包含 `id`、`createdAt`、`deleting`、`phase`、`settings`、`sessionTitle`、`projectPath`、`requests`、`logs` 等字段。错误响应为 `{ "error": "说明" }`；不存在返回 404，会话占用或状态冲突返回 409，参数错误返回 400。
+
+终端打开请求为 `{ "action": "open", "cols": 100, "rows": 32 }`，返回 `{ "viewerId", "sessionId" }`。尺寸请求为 `{ "action": "resize", "viewerId": "...", "cols": 100, "rows": 32 }`；关闭请求体为 `{ "viewerId": "..." }`。尺寸必须为整数，列数限制为 40～240，行数限制为 10～80。终端只连接当前守护的现有会话，不开始任务，不接受任意按键或提示词。尚无可用连接时返回 409，达到显示进程限额时返回 429。
+
+终端 SSE 的 `screen` 事件为 `{ cols, rows, data }`，需先清空终端、设置对应尺寸，再写入 `data`；`data` 事件为 `{ data }`，按顺序写入终端；`end` 事件为 `{ message }`，表示显示连接结束。`data` 是包含 ANSI 控制序列的原生终端数据，不是 HTML 或日志摘要。每个 viewer 仅允许一条 SSE；未在 15 秒内连接的 viewer 自动回收，SSE 断开也会回收该显示进程。重新连接应重新打开 viewer。所有终端接口（包括 GET）均检查浏览器来源。
 
 ## 创建并开始
 

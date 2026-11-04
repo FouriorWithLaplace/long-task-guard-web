@@ -1,6 +1,16 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import readline from "node:readline";
+import { createHash, randomBytes } from "node:crypto";
+import { stripVTControlCharacters } from "node:util";
+import WebSocket from "ws";
+
+export interface CodexTerminalTarget {
+  executable: string;
+  cwd: string;
+  endpoint: string;
+  token: string;
+}
 
 export interface CodexEvents {
   onNotification: (method: string, params: Record<string, unknown>) => void;
@@ -14,6 +24,7 @@ export interface CodexConnection {
   respond: (id: string | number, result: object) => void;
   rejectRequest: (id: string | number, message: string) => void;
   close: () => void;
+  terminalTarget?: () => CodexTerminalTarget | null;
 }
 
 interface PendingRequest {
@@ -24,6 +35,32 @@ interface PendingRequest {
   timeout: ReturnType<typeof setTimeout> | null;
 }
 
+// WebSocket app-server 不依赖 stdin 存活；服务退出时清理自己启动的进程。
+const ownedGlobal = globalThis as typeof globalThis & { longTaskGuardOwnedProcesses?: Set<number> };
+
+export function trackOwnedProcess(pid: number | undefined): () => void {
+  if (!pid) return function nothingToTrack() {};
+  if (!ownedGlobal.longTaskGuardOwnedProcesses) {
+    ownedGlobal.longTaskGuardOwnedProcesses = new Set();
+    process.once("exit", cleanupOwnedProcesses);
+  }
+  const processes = ownedGlobal.longTaskGuardOwnedProcesses;
+  processes.add(pid);
+  return function untrack() { processes.delete(pid); };
+}
+
+function cleanupOwnedProcesses() {
+  for (const pid of ownedGlobal.longTaskGuardOwnedProcesses ?? []) {
+    try {
+      if (process.platform === "win32") {
+        spawnSync("taskkill.exe", ["/PID", String(pid), "/T", "/F"], { windowsHide: true, stdio: "ignore", timeout: 5000 });
+      } else {
+        process.kill(pid, "SIGTERM");
+      }
+    } catch { /* 已退出的进程不需要再次清理。 */ }
+  }
+}
+
 // 每个守护任务只管理自己创建的 app-server，不连接或关闭其他 Codex 窗口。
 export class CodexClient implements CodexConnection {
   private child: ChildProcessWithoutNullStreams;
@@ -32,29 +69,88 @@ export class CodexClient implements CodexConnection {
   private pending = new Map<string, PendingRequest>();
   private nextId = 0;
   private closed = false;
+  private socket: WebSocket | null = null;
+  private target: CodexTerminalTarget | null = null;
+  private ready: Promise<void> = Promise.resolve();
+  private rejectReady: ((error: Error) => void) | null = null;
+  private startupTimer: ReturnType<typeof setTimeout> | null = null;
+  private untrackProcess: () => void;
 
-  constructor(executable: string, cwd: string, events: CodexEvents) {
+  constructor(executable: string, cwd: string, events: CodexEvents, transport: "stdio" | "websocket" = "stdio") {
     this.events = events;
-    this.child = spawn(executable, ["--no-daemon", "app-server", "--listen", "stdio://"], {
+    const args = ["--no-daemon", "app-server", "--listen", "stdio://"];
+    const token = randomBytes(32).toString("hex");
+    if (transport === "websocket") {
+      args[3] = "ws://127.0.0.1:0";
+      args.push("--ws-auth", "capability-token", "--ws-token-sha256", createHash("sha256").update(token).digest("hex"));
+    }
+    // Codex 是用户安装的本机程序，不应让打包器追踪整个工程来寻找可执行文件。
+    this.child = spawn(/* turbopackIgnore: true */ executable, args, {
       cwd: cwd,
       windowsHide: true,
       stdio: ["pipe", "pipe", "pipe"],
     });
+    this.untrackProcess = trackOwnedProcess(this.child.pid);
     this.lines = readline.createInterface({ input: this.child.stdout });
 
-    this.lines.on("line", this.handleLine.bind(this));
-    this.child.stderr.resume();
+    if (transport === "stdio") {
+      this.lines.on("line", this.handleLine.bind(this));
+      this.child.stderr.resume();
+    } else {
+      this.ready = this.connectWebSocket(executable, cwd, token);
+      // 启动失败可能先于调用 initialize；仍由 initialize 和 onDisconnect 报告。
+      void this.ready.catch(function ignoreEarlyRejection() {});
+    }
     this.child.on("error", this.handleDisconnect.bind(this));
     this.child.stdin.on("error", this.handleDisconnect.bind(this));
     this.child.on("close", this.handleExit.bind(this));
   }
 
   async initialize() {
+    await this.ready;
     await this.request("initialize", {
       clientInfo: { name: "long_task_guard", version: "0.1.0" },
       capabilities: { experimentalApi: false },
     });
     this.send({ method: "initialized" });
+  }
+
+  terminalTarget(): CodexTerminalTarget | null {
+    if (this.closed || !this.target) return null;
+    return { ...this.target };
+  }
+
+  private connectWebSocket(executable: string, cwd: string, token: string): Promise<void> {
+    return new Promise((resolve, reject) => {
+      this.rejectReady = reject;
+      let startupOutput = "";
+      this.startupTimer = setTimeout(() => {
+        this.handleDisconnect(new Error("Codex WebSocket 启动超时，请确认本机 Codex 支持 --remote 和 WebSocket app-server。"));
+      }, 15000);
+      this.child.stderr.on("data", (chunk: Buffer) => {
+        if (this.socket || this.closed) return;
+        startupOutput = (startupOutput + chunk.toString()).slice(-8192);
+        // next dev 会传递 FORCE_COLOR；启动横幅可能带颜色，不能把它当协议字符。
+        const match = stripVTControlCharacters(startupOutput).match(/listening on:\s*(ws:\/\/127\.0\.0\.1:\d+)\s/);
+        if (!match) return;
+        const endpoint = match[1];
+        const socket = new WebSocket(endpoint, { headers: { Authorization: "Bearer " + token } });
+        this.socket = socket;
+        socket.on("message", (data) => { this.handleLine(data.toString()); });
+        socket.on("error", this.handleDisconnect.bind(this));
+        socket.on("close", () => {
+          this.handleDisconnect(new Error("Codex WebSocket 连接已关闭。"));
+        });
+        socket.on("open", () => {
+          if (this.closed) return;
+          if (this.startupTimer) clearTimeout(this.startupTimer);
+          this.startupTimer = null;
+          this.rejectReady = null;
+          this.target = { executable, cwd, endpoint, token };
+          resolve();
+        });
+      });
+    });
   }
 
   request(method: string, params: object, timeoutMs = 30000): Promise<unknown> {
@@ -97,6 +193,13 @@ export class CodexClient implements CodexConnection {
     }
 
     this.closed = true;
+    this.untrackProcess();
+    if (this.startupTimer) clearTimeout(this.startupTimer);
+    this.startupTimer = null;
+    this.rejectReady?.(new Error("Codex 连接已关闭。"));
+    this.rejectReady = null;
+    this.target = null;
+    this.socket?.terminate();
     this.lines.close();
 
     for (const pending of this.pending.values()) {
@@ -129,7 +232,8 @@ export class CodexClient implements CodexConnection {
       throw new Error("Codex 连接已关闭。" );
     }
 
-    this.child.stdin.write(JSON.stringify(message) + "\n");
+    if (this.socket) this.socket.send(JSON.stringify(message));
+    else this.child.stdin.write(JSON.stringify(message) + "\n");
   }
 
   private handleLine(line: string) {

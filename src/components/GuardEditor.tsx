@@ -7,6 +7,7 @@ import SessionPicker from "@/components/SessionPicker";
 import ModelSelector from "@/components/ModelSelector";
 import GuardStatus from "@/components/GuardStatus";
 import GuardLogs from "@/components/GuardLogs";
+import GuardTerminal from "@/components/GuardTerminal";
 import GuardRequests from "@/components/GuardRequests";
 import { useGuard } from "@/hooks/useGuard";
 
@@ -438,7 +439,11 @@ export default function GuardEditor({ guardId = null }: { guardId?: string | nul
         </section>
 
         {/* 运行记录 */}
-        <GuardLogs key={guard.instanceId} logs={guard.logs} />
+        {guardId && <GuardTerminal key={guard.instanceId} guardId={guardId} guard={guard} />}
+        <details className="rounded-2xl border border-slate-200 bg-white">
+          <summary className="cursor-pointer p-5 text-sm font-medium text-slate-600">守护运行记录与错误</summary>
+          <GuardLogs key={guard.instanceId} logs={guard.logs} />
+        </details>
         <footer className="pb-4 text-center text-xs text-slate-400">
           长任务守护 · 本机会话管理
         </footer>

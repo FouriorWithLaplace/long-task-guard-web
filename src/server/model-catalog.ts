@@ -181,7 +181,7 @@ function queryCodexModels(): Promise<ModelOption[]> {
   const executable = findCodexExecutable();
 
   return new Promise(function runQuery(resolve, reject) {
-    const child = spawn(executable, ["--no-daemon", "app-server", "--listen", "stdio://"], {
+    const child = spawn(/* turbopackIgnore: true */ executable, ["--no-daemon", "app-server", "--listen", "stdio://"], {
       windowsHide: true,
       stdio: ["pipe", "pipe", "pipe"],
     });

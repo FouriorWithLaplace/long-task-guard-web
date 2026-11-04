@@ -14,7 +14,7 @@ const guardGlobal = globalThis as typeof globalThis & {
 export function getGuardManager(): GuardManager {
   function createRunner() {
     return new GuardRunner(function createConnection(cwd, events) {
-      return new CodexClient(findCodexExecutable(), cwd, events);
+      return new CodexClient(findCodexExecutable(), cwd, events, "websocket");
     });
   }
   if (!guardGlobal.longTaskGuardManager) {
