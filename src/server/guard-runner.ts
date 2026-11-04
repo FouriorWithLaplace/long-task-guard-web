@@ -77,7 +77,7 @@ export class GuardRunner {
   private sending = false;
   private awaitingTurn = false;
   private creatingSession = false;
-  private awaitingRecoverySuccess = false;
+  private awaitingRecoveryProgress = false;
   private finishedTurns = new Set<string>();
   private summaryBuffers = new Map<string, string>();
   private nextLogId = 0;
@@ -147,7 +147,7 @@ export class GuardRunner {
     this.sending = false;
     this.awaitingTurn = false;
     this.creatingSession = false;
-    this.awaitingRecoverySuccess = false;
+    this.awaitingRecoveryProgress = false;
     this.state.runId++;
     this.state.settings = { ...settings };
     this.state.sessionTitle = session.title;
@@ -487,7 +487,7 @@ export class GuardRunner {
     this.state.requests = [];
 
     if (turn.status === "completed") {
-      this.awaitingRecoverySuccess = false;
+      this.awaitingRecoveryProgress = false;
       this.addLog("status", "system", "本轮执行完成。" );
       this.scheduleNext("complete", generation);
     } else {
@@ -516,13 +516,13 @@ export class GuardRunner {
     this.state.turnId = null;
     this.state.requests = [];
 
-    if (this.awaitingRecoverySuccess) {
+    if (this.awaitingRecoveryProgress) {
       this.state.phase = "needsInput";
-      this.addLog("error", "system", "新会话尚未成功完成一轮就再次遇到 413（请求体过大），已停止自动换会话。请检查开始消息、附件或中转站请求体限制；调整后暂停并重新开始。");
+      this.addLog("error", "system", "新会话尚未成功完成工具操作或一轮执行就再次遇到 413（请求体过大），已停止自动换会话。请检查开始消息、附件或中转站请求体限制；调整后暂停并重新开始。");
       return;
     }
 
-    this.awaitingRecoverySuccess = true;
+    this.awaitingRecoveryProgress = true;
     this.state.settings = { ...settings, sessionId: "" };
     this.state.sessionTitle = "待创建会话";
     this.addLog("status", "system", "遇到 413（请求体过大），正在从会话 " + previousSessionId + " 切换到新会话；绑定后重新发送开始消息。旧会话已保留。");
@@ -641,6 +641,12 @@ export class GuardRunner {
     if (typeof item.exitCode === "number" && item.exitCode !== 0) status = "failed";
     if (item.status === "declined") status = "declined";
     if (item.status === "interrupted") status = "interrupted";
+    // 长任务可能在一轮结束前再次填满上下文；成功的工具操作已证明恢复有进展。
+    // 上下文整理不算任务进展，也不能用失败的工具结果解除防循环限制。
+    const hasToolError = Boolean(item.error) || record(item.result).isError === true;
+    if (status === "completed" && item.type !== "contextCompaction" && !hasToolError) {
+      this.awaitingRecoveryProgress = false;
+    }
     this.updateProgress(turnId + ":activity:" + id, "tool", description, status);
   }
 

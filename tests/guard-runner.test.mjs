@@ -618,14 +618,14 @@ test("unrelated errors, foreign threads, old turns and assistant text never trig
   } finally { await runner.pause(); }
 });
 
-test("another 413 before a successful recovery turn waits for input without creating more sessions", async function (t) {
+test("another 413 without effective recovery progress waits for input without creating more sessions", async function (t) {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   const { runner, clients, starts, calls } = fixture();
   try {
     await runner.start(settings, session);
     clients[0].notify("error", { turnId: "turn-1", error: payloadTooLarge });
     await settle();
-    // A partial reply is not proof that the recovery turn can complete successfully.
+    // An announcement alone is not evidence that the new session has executed work.
     clients[1].notify("item/agentMessage/delta", { turnId: "turn-2", itemId: "reply", delta: "Working" });
     clients[1].notify("error", { turnId: "turn-2", willRetry: true, error: payloadTooLarge });
     clients[1].complete("turn-2");
@@ -644,6 +644,83 @@ test("another 413 before a successful recovery turn waits for input without crea
     assert.equal(starts().at(-1).params.threadId, "created-thread");
     assert.equal(starts().at(-1).params.input[0].text, settings.startMessage);
   } finally { await runner.pause(); }
+});
+
+test("completed tools allow repeated 413 recovery within unfinished long turns", async function () {
+  const { runner, clients, starts } = fixture();
+  try {
+    await runner.start(settings, session);
+    clients[0].notify("error", { turnId: "turn-1", error: payloadTooLarge });
+    await settle();
+
+    const completedTools = [
+      { type: "commandExecution", status: "completed", exitCode: 0 },
+      { type: "fileChange", status: "completed" },
+      { type: "webSearch" },
+      { type: "imageView" },
+      { type: "mcpToolCall", status: "completed", error: null },
+      { type: "dynamicToolCall", status: "completed", success: true },
+    ];
+    for (let index = 0; index < completedTools.length; index++) {
+      const client = clients[index + 1];
+      const turnId = runner.snapshot().turnId;
+      client.notify("item/completed", { turnId, item: { id: "tool", ...completedTools[index] } });
+      // The turn never completes: context can fill up while the agent keeps working.
+      client.notify("error", { turnId, willRetry: true, error: payloadTooLarge });
+      await settle();
+      assert.equal(runner.snapshot().phase, "running");
+      assert.equal(runner.snapshot().settings.sessionId, "created-thread-" + (index + 2));
+      assert.equal(starts().length, index + 3);
+      assert.equal(starts().at(-1).params.input[0].text, settings.startMessage);
+      assert.equal(client.closed, true);
+    }
+
+    // Each new session must establish its own progress; old callbacks cannot do it.
+    clients[1].notify("item/completed", {
+      turnId: runner.snapshot().turnId,
+      item: { id: "late-tool", type: "commandExecution", status: "completed", exitCode: 0 },
+    });
+    clients.at(-1).notify("error", { turnId: runner.snapshot().turnId, error: payloadTooLarge });
+    await settle();
+    assert.equal(runner.snapshot().phase, "needsInput");
+    assert.equal(starts().length, completedTools.length + 2);
+  } finally { await runner.pause(); }
+});
+
+test("unfinished, failed and unrelated activity does not disable the 413 loop protection", async function (t) {
+  const scenarios = [
+    { name: "tool started", method: "item/started", item: { type: "commandExecution", status: "inProgress" } },
+    { name: "failed command", item: { type: "commandExecution", status: "failed" } },
+    { name: "nonzero exit", item: { type: "commandExecution", status: "completed", exitCode: 1 } },
+    { name: "declined edit", item: { type: "fileChange", status: "declined" } },
+    { name: "interrupted tool", item: { type: "commandExecution", status: "interrupted" } },
+    { name: "failed dynamic tool", item: { type: "dynamicToolCall", success: false } },
+    { name: "tool error", item: { type: "mcpToolCall", error: { message: "Failed" } } },
+    { name: "error result", item: { type: "mcpToolCall", result: { isError: true } } },
+    { name: "compaction", item: { type: "contextCompaction" } },
+    { name: "assistant announcement", item: { type: "agentMessage", text: "Working" } },
+    { name: "reasoning", item: { type: "reasoning", summary: ["Planning"] } },
+    { name: "unknown item", item: { type: "unknown" } },
+    { name: "old turn", params: { turnId: "turn-1" }, item: { type: "webSearch" } },
+    { name: "foreign thread", params: { threadId: "foreign" }, item: { type: "webSearch" } },
+  ];
+  for (const scenario of scenarios) {
+    await t.test(scenario.name, async function verify() {
+      const { runner, clients, starts } = fixture();
+      try {
+        await runner.start(settings, session);
+        clients[0].notify("error", { turnId: "turn-1", error: payloadTooLarge });
+        await settle();
+        clients[1].notify(scenario.method ?? "item/completed", {
+          turnId: "turn-2", item: { id: "tool", ...scenario.item }, ...scenario.params,
+        });
+        clients[1].notify("error", { turnId: "turn-2", error: payloadTooLarge });
+        await settle();
+        assert.equal(runner.snapshot().phase, "needsInput");
+        assert.equal(starts().length, 2);
+      } finally { await runner.pause(); }
+    });
+  }
 });
 
 test("a successful recovery turn permits another session switch when history grows again", async function (t) {
