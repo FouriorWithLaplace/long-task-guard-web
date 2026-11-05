@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "长任务守护",
-  description: "管理本机 Codex 会话，实时查看多个守护的执行进展。",
+  title: "百科采集工作台",
+  description: "按词条核查信息、查看证据与字段进度，管理独立的 Codex 采集任务。",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

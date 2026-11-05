@@ -6,7 +6,7 @@ import type { GuardSnapshot } from "@/types/guard";
 import { followTerminalOutput } from "./terminal-follow";
 import "@xterm/xterm/css/xterm.css";
 
-export default function GuardTerminal({ guardId, guard }: { guardId: string; guard: GuardSnapshot }) {
+export default function GuardTerminal({ guardId, guard, apiBase = "/api/guards" }: { guardId: string; guard: GuardSnapshot; apiBase?: string }) {
   const container = useRef<HTMLDivElement>(null);
   const terminal = useRef<Terminal | null>(null);
   const resizeRemote = useRef<(() => void) | null>(null);
@@ -71,7 +71,7 @@ export default function GuardTerminal({ guardId, guard }: { guardId: string; gua
   useEffect(function connectTerminal() {
     if (!ready || !terminal.current || !active || !sessionId) return;
     const instance = terminal.current;
-    const endpoint = "/api/guards/" + encodeURIComponent(guardId) + "/terminal";
+    const endpoint = apiBase + "/" + encodeURIComponent(guardId) + "/terminal";
     let disposed = false;
     let viewerId = "";
     let stream: EventSource | null = null;
@@ -189,7 +189,7 @@ export default function GuardTerminal({ guardId, guard }: { guardId: string; gua
       resizeRemote.current = null;
       release();
     };
-  }, [ready, guardId, active, sessionId, guard.runId, retry]);
+  }, [ready, guardId, active, sessionId, guard.runId, retry, apiBase]);
 
   function reconnect() {
     setRetry(function next(previous) { return previous + 1; });

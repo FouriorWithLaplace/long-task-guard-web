@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "node --test tests/model-catalog.test.mjs tests/codex-client.test.mjs tests/guard-runner.test.mjs tests/guard-events.test.mjs tests/guard-manager.test.mjs tests/guard-http.test.mjs tests/project-directory.test.mjs tests/project-picker.test.mjs tests/guard-service.test.mjs tests/guard-terminal.test.mjs tests/terminal-follow.test.mjs"
+    "test": "node --test tests/model-catalog.test.mjs tests/codex-client.test.mjs tests/guard-runner.test.mjs tests/guard-events.test.mjs tests/guard-manager.test.mjs tests/guard-http.test.mjs tests/project-directory.test.mjs tests/project-picker.test.mjs tests/guard-service.test.mjs tests/guard-terminal.test.mjs tests/terminal-follow.test.mjs tests/encyclopedia.test.mjs"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
@@ -22,7 +22,7 @@
   },
   "devDependencies": {
     "@tailwindcss/turbopack": "^4",
-    "@types/node": "^20",
+    "@types/node": "^24.19.2",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@types/ws": "^8.18.2",

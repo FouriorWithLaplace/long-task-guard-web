@@ -75,9 +75,11 @@ export class CodexClient implements CodexConnection {
   private rejectReady: ((error: Error) => void) | null = null;
   private startupTimer: ReturnType<typeof setTimeout> | null = null;
   private untrackProcess: () => void;
+  private experimentalApi: boolean;
 
-  constructor(executable: string, cwd: string, events: CodexEvents, transport: "stdio" | "websocket" = "stdio") {
+  constructor(executable: string, cwd: string, events: CodexEvents, transport: "stdio" | "websocket" = "stdio", options: { experimentalApi?: boolean; tempDirectory?: string } = {}) {
     this.events = events;
+    this.experimentalApi = options.experimentalApi ?? false;
     const args = ["--no-daemon", "app-server", "--listen", "stdio://"];
     const token = randomBytes(32).toString("hex");
     if (transport === "websocket") {
@@ -89,6 +91,7 @@ export class CodexClient implements CodexConnection {
       cwd: cwd,
       windowsHide: true,
       stdio: ["pipe", "pipe", "pipe"],
+      env: options.tempDirectory ? { ...process.env, TEMP: options.tempDirectory, TMP: options.tempDirectory, TMPDIR: options.tempDirectory } : process.env,
     });
     this.untrackProcess = trackOwnedProcess(this.child.pid);
     this.lines = readline.createInterface({ input: this.child.stdout });
@@ -110,7 +113,7 @@ export class CodexClient implements CodexConnection {
     await this.ready;
     await this.request("initialize", {
       clientInfo: { name: "long_task_guard", version: "0.1.0" },
-      capabilities: { experimentalApi: false },
+      capabilities: { experimentalApi: this.experimentalApi },
     });
     this.send({ method: "initialized" });
   }

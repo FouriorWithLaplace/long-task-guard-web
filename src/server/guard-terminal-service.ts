@@ -1,17 +1,20 @@
 import { CodexTerminal, terminalSize } from "./codex-terminal";
 import { GuardError } from "./guard-manager";
-import type { GuardManager } from "./guard-manager";
 import type { TerminalTarget } from "./codex-terminal";
 
 type CreateTerminal = (target: TerminalTarget, cols: number, rows: number) => CodexTerminal;
+export interface TerminalManager {
+  terminalTarget(id: string): TerminalTarget | null;
+  subscribe(listener: () => void): () => void;
+}
 
 export class GuardTerminalService {
-  private manager: GuardManager;
+  private manager: TerminalManager;
   private terminals = new Map<string, { guardId: string; terminal: CodexTerminal }>();
   private createTerminal: CreateTerminal;
   private unsubscribe: () => void;
 
-  constructor(manager: GuardManager, createTerminal: CreateTerminal = createNativeTerminal) {
+  constructor(manager: TerminalManager, createTerminal: CreateTerminal = createNativeTerminal) {
     this.manager = manager;
     this.createTerminal = createTerminal;
     this.unsubscribe = manager.subscribe(this.refresh.bind(this));
