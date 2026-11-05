@@ -16,6 +16,7 @@ import { getEncyclopediaService } from "./service.ts";
 import type { EntryTask, TaskFilterState } from "../../types/encyclopedia.ts";
 import { fieldProgress } from "../../types/encyclopedia.ts";
 import { assertCurrentTaskProtocol, batchOperate, parseBatch } from "./batch.ts";
+import { exportRequest } from "./export-http.ts";
 
 function summary(task: EntryTask) {
   const results: EntryTask["results"] = {};
@@ -50,6 +51,10 @@ export async function encyclopediaRequest(
     const service = getEncyclopediaService();
     const manager = service.manager;
     const url = new URL(request.url);
+    if (segments[0] === "export")
+      return await exportRequest(request, segments, paths, function readStates() {
+        return manager.store.phases();
+      });
     if (
       segments[0] === "entries" &&
       segments[2] === "terminal" &&

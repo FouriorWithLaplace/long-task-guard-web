@@ -89,6 +89,9 @@ export default function EncyclopediaPanel({ view }: { view: View }) {
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [batchBusy, setBatchBusy] = useState(false);
   const [downloadingFields, setDownloadingFields] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [exportMessage, setExportMessage] = useState("");
+  const exportController = useRef<AbortController | null>(null);
   const [filter, setFilter] = useState("all");
   const [fieldSearch, setFieldSearch] = useState("");
   const [showHistory, setShowHistory] = useState(false);
@@ -102,6 +105,35 @@ export default function EncyclopediaPanel({ view }: { view: View }) {
   const category = categories.find(function match(item) {
     return item.key === categoryKey;
   });
+  useEffect(function watchExport() {
+    return function cleanup() { exportController.current?.abort(); };
+  }, []);
+
+  async function downloadCompleted() {
+    if (exportController.current) return;
+    const controller = new AbortController();
+    exportController.current = controller;
+    setExporting(true);
+    setExportMessage("");
+    setError("");
+    try {
+      const response = await fetch("/api/encyclopedia/export", { method: "POST", signal: controller.signal });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "导出失败，请重试。");
+      const anchor = document.createElement("a");
+      anchor.href = result.url;
+      anchor.download = result.filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      setExportMessage("已生成包含 " + result.count + " 个词条的压缩包，已发起下载。");
+    } catch (failure) {
+      if (!controller.signal.aborted) setError(failure instanceof Error ? failure.message : "导出失败。");
+    } finally {
+      exportController.current = null;
+      if (!controller.signal.aborted) setExporting(false);
+    }
+  }
 
   const refresh = useCallback(
     async function refresh(signal?: AbortSignal) {
@@ -524,6 +556,18 @@ export default function EncyclopediaPanel({ view }: { view: View }) {
                   <span>查看任务 ↗</span>
                 </Link>
               </div>
+            </section>
+            <section className="ep-export" aria-label="导出已完成词条">
+              <div>
+                <h2>保存已完成的成果</h2>
+                <p>一键下载全部已完成词条的数据库，以及关联原件和图片。</p>
+                <p className="ep-export-status" role="status" aria-live="polite">
+                  {exporting ? "正在准备数据库和附件，文件较多时请稍候…" : exportMessage || "仅包含已完成词条；数据库结构和原始 ID 保持不变。"}
+                </p>
+              </div>
+              <button className="ep-button ep-primary" onClick={downloadCompleted} disabled={exporting} aria-busy={exporting}>
+                {exporting ? "正在打包…" : "导出全部已完成词条"}
+              </button>
             </section>
             <div className="ep-section-title">
               <h2>探索词条库</h2>
