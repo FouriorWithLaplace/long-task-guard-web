@@ -52,15 +52,22 @@ export const categories = [
   {
     key: "lecture",
     name: "课程",
-    description: "课程、会议与讲义资料",
+    description: "课程、教学与讲义资料",
     mark: "07",
     types: ["lecture"],
   },
   {
+    key: "conference",
+    name: "会议",
+    description: "学术会议、研讨会与会议资料",
+    mark: "08",
+    types: ["conference"],
+  },
+  {
     key: "entry",
     name: "科学词条",
-    description: "概念、方法、诊断、物理量、材料、软件、部件、计划与事件",
-    mark: "08",
+    description: "概念、方法、诊断、物理量、材料、部件与研究计划",
+    mark: "09",
     types: [] as string[],
   },
 ];

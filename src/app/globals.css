@@ -1,5 +1,11 @@
 @import "tailwindcss";
 
+.ep-json-object>div{display:grid;grid-template-columns:minmax(90px,150px) minmax(0,1fr);gap:16px;border-bottom:1px solid #e4e9e2;padding:8px 0}
+.ep-json-object dt{color:#66765e;font-size:12px}.ep-json-object dd{min-width:0}.ep-json-list{padding-left:20px;list-style:disc}.ep-json-list>li{margin:12px 0}.ep-json-text{white-space:pre-wrap;overflow-wrap:anywhere}
+.ep-content-timeline{border-left:2px solid #99b69a;margin:15px 8px;padding-left:22px}.ep-content-timeline>li{margin-bottom:26px}.ep-content-timeline time{display:block;font-size:12px;color:#597f59}.ep-content-timeline strong{display:block;margin:6px 0}
+.ep-content-gallery{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:18px}.ep-content-gallery img{max-height:260px;width:100%;object-fit:contain;border-radius:8px}.ep-content-gallery figcaption{font-size:12px;margin-top:6px}.ep-entry-cover{width:100%;max-height:320px;object-fit:contain;border-radius:14px;margin:20px 0}
+@media(max-width:640px){.ep-json-object>div{grid-template-columns:1fr;gap:3px}}
+
 .ep-export {
   display: flex;
   align-items: center;

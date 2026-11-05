@@ -1,4 +1,5 @@
 import type { EntryTask, FieldDefinition, Json, ProgressCounts } from "@/types/encyclopedia";
+import EncyclopediaContent from "./EncyclopediaContent";
 import { outcomeLabels, phaseLabels, processedFieldKeys, taskFilterGroup, taskFilters, taskProgress } from "@/types/encyclopedia";
 
 export function formatDate(value: string) {
@@ -106,9 +107,11 @@ export function CategoryIcon({ type }: { type: string }) {
 export function FieldRow({
   field,
   task,
+  entityId,
 }: {
   field: FieldDefinition;
   task?: EntryTask | null;
+  entityId?: number;
 }) {
   const result = task?.results[field.key];
   const processed = processedFieldKeys(task).includes(field.key);
@@ -142,7 +145,7 @@ export function FieldRow({
       </summary>
       <div className="ep-field-expanded">
         <p className="ep-kicker">数据库当前值</p>
-        <pre>{displayValue(field.value)}</pre>
+        <EncyclopediaContent value={field.value} field={field.fieldKey} entityId={entityId||task?.entityId}/>
         <p className="ep-muted">
           {field.description}
           {!field.writable && " 此字段不允许自动修改。"}

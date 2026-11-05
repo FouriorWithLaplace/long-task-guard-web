@@ -746,10 +746,10 @@ test("batch continues eligible entries, skips completed entries, isolates failur
   assert.ok(skip.every((result) => result.status === "skipped"));
 });
 
-test("database readers map all types into eight groups and preserve current fields", function (t) {
+test("database readers map all types into nine groups and preserve current fields", function (t) {
   const config = fixture(t);
   const groups = readCategories(config);
-  assert.equal(groups.length, 8);
+  assert.equal(groups.length, 9);
   assert.equal(
     groups.reduce((sum, g) => sum + g.total, 0),
     3,

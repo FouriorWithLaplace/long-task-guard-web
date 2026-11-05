@@ -17,6 +17,7 @@ import type { EntryTask, TaskFilterState } from "../../types/encyclopedia.ts";
 import { fieldProgress } from "../../types/encyclopedia.ts";
 import { assertCurrentTaskProtocol, batchOperate, parseBatch } from "./batch.ts";
 import { exportRequest } from "./export-http.ts";
+import {readEntryImage} from "./media.ts";
 
 function summary(task: EntryTask) {
   const results: EntryTask["results"] = {};
@@ -66,6 +67,10 @@ export async function encyclopediaRequest(
         service.terminals,
       );
     if (request.method === "GET") {
+      if(segments[0]==="entries"&&segments[2]==="images"&&segments.length===4){
+        const image=readEntryImage(paths,entityId(segments[1]),segments[3]);
+        return new Response(new Uint8Array(image.bytes),{headers:{...guardResponseHeaders,"Content-Type":image.mime,"X-Content-Type-Options":"nosniff"}});
+      }
       let result: unknown;
       if (segments[0] === "categories" && segments.length === 1)
         result = {

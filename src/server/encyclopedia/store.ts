@@ -57,6 +57,9 @@ export class TaskStore {
       phases.set(Number(row.entity_id), row.phase as EntryTask["phase"]);
     return phases;
   }
+  removeTask(id: number) {
+    this.db.prepare("DELETE FROM tasks WHERE entity_id=?").run(id);
+  }
   save(task: EntryTask, event?: string) {
     task.updatedAt = new Date().toISOString();
     this.db.exec("BEGIN IMMEDIATE");

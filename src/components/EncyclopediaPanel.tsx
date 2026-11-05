@@ -22,6 +22,7 @@ import type { GuardSnapshot } from "@/types/guard";
 import GuardTerminal from "./GuardTerminal";
 import ModelSelector from "./ModelSelector";
 import EncyclopediaBatch from "./EncyclopediaBatch";
+import {EntryGalleryCover} from "./EncyclopediaContent";
 import {
   CategoryIcon,
   FieldRow,
@@ -547,7 +548,7 @@ export default function EncyclopediaPanel({ view }: { view: View }) {
                         .toLocaleString("zh-CN")
                     : "—"}
                 </span>
-                <p>个词条 · 8 大分类</p>
+                <p>个词条 · {categories.length} 大分类</p>
                 <Link href="/encyclopedia/running" className="ep-running-link">
                   <span>
                     <i className="ep-live-dot" />
@@ -812,6 +813,7 @@ export default function EncyclopediaPanel({ view }: { view: View }) {
                 {detail.entry.typeName} / #{detail.entry.id}
               </p>
               <h1>{detail.entry.name}</h1>
+              {detail.entry.type==="device"?<EntryGalleryCover id={detail.entry.id} name={detail.entry.name} value={detail.entry.fields.find(function gallery(field){return field.fieldKey==="gallery";})?.value||null}/>:null}
               {detail.entry.nameEn &&
                 detail.entry.nameEn !== detail.entry.name && (
                   <p className="ep-lead">{detail.entry.nameEn}</p>
@@ -941,7 +943,7 @@ export default function EncyclopediaPanel({ view }: { view: View }) {
             <div className="ep-fields">
               {fields.map(function fieldRow(field) {
                 return (
-                  <FieldRow key={field.key} field={field} task={detail.task} />
+                  <FieldRow key={field.key} field={field} task={detail.task} entityId={detail.entry.id}/>
                 );
               })}
               {!fields.length && <p className="ep-empty">没有匹配的字段。</p>}

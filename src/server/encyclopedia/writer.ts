@@ -4,6 +4,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { gunzipSync } from "node:zlib";
 import { isDeepStrictEqual } from "node:util";
+import { normalizeStructuredValue } from "./structured-value.ts";
 import {
   hash,
   object,
@@ -235,7 +236,11 @@ export class EntryWriter {
     const adopting =
       result.outcome === "verified" || result.outcome === "tentative";
     if (!adopting) result.value = field.value; // 缺资料不是清空已有内容的理由。
-    if (adopting) validateValue(result.value, field.valueType);
+    if (adopting) {
+      validateValue(result.value, field.valueType);
+      if (detail.fields.some(function revised(item) { return item.key === "fields.component_suppliers"; }))
+        result.value = normalizeStructuredValue(detail.type, result.field, result.value);
+    }
     result.changed = !isDeepStrictEqual(field.value, result.value);
     if (result.changed && !field.writable)
       throw new Error("该字段为身份字段或暂停采集字段，不允许自动修改。");

@@ -12,6 +12,7 @@ import type { EncyclopediaPaths } from "./config.ts";
 import { TaskStore } from "./store.ts";
 import { EntryWriter } from "./writer.ts";
 import { researchTools } from "./tools.ts";
+import { reconcileTaskSchema } from "./task-schema.ts";
 
 type ConnectionFactory = (events: CodexEvents, temp: string) => CodexConnection;
 interface Execution {
@@ -92,6 +93,8 @@ export class EncyclopediaManager {
       try {
         if (!task.skillHash) task.skillHash = this.saveSkill();
         const detail = readDetail(this.config, task.entityId);
+        reconcileTaskSchema(task, detail);
+        if (!task.skillHash) task.skillHash = this.saveSkill();
         task.scope = detail.fields.filter(function writable(field) {
           return field.writable;
         }).map(function key(field) { return field.key; });
@@ -100,6 +103,10 @@ export class EncyclopediaManager {
         if (task.desired === "stopped" && task.phase !== "completed")
           this.completeIfReady(task);
       } catch (error) {
+        if (error && typeof error === "object" && "code" in error && error.code === "ENTRY_NOT_FOUND") {
+          this.store.removeTask(task.entityId);
+          continue;
+        }
         if (task.desired === "running") this.retry(task, error, task.slotHeld);
         else {
           task.phase = "blocked";

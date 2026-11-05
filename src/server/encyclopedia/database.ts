@@ -84,7 +84,7 @@ export function categoryTypes(db: DatabaseSync, key: string): string[] {
       return String(row.key);
     })
     .filter(function other(type) {
-      return !dedicated.includes(type);
+      return !dedicated.includes(type) && !["code", "event"].includes(type);
     });
 }
 export function readCategories(config: EncyclopediaPaths) {
@@ -279,7 +279,7 @@ export function readDetail(
     const row = db
       .prepare(entrySelect + " WHERE e.id=? AND e.deleted_at IS NULL")
       .get(id);
-    if (!row) throw new Error("词条不存在或已经删除。");
+    if (!row) throw Object.assign(new Error("词条不存在或已经删除。"), { code: "ENTRY_NOT_FOUND" });
     const definitions = db
       .prepare(
         "SELECT * FROM wiki_column_fields WHERE type_key=? ORDER BY storage,ordinal,field_key",
