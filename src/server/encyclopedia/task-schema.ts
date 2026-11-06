@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import type { EntryDetail, EntryTask } from "../../types/encyclopedia.ts";
 
 // New or transformed fields are pending; unchanged confirmed results survive.
-export function reconcileTaskSchema(task: EntryTask, detail: EntryDetail) {
+export function reconcileTaskSchema(task: EntryTask, detail: EntryDetail, changedFields = new Set<string>()) {
   if (task.dictionaryHash === detail.dictionaryHash) return false;
   const confirmed = new Set(task.processedFields);
   const previousScope = new Set(task.scope);
@@ -21,6 +21,7 @@ export function reconcileTaskSchema(task: EntryTask, detail: EntryDetail) {
         field.writable &&
         previousScope.has(field.key) &&
         confirmed.has(field.key) &&
+        !changedFields.has(field.key) &&
         result?.readback &&
         isDeepStrictEqual(result.value, field.value)
       );

@@ -9,6 +9,11 @@ test("guard mutations accept same-origin browsers and AI clients while rejecting
   assert.equal(checkGuardOrigin(new Request(url, { method: "POST", headers: { Origin: "https://other.example" } })).status, 403);
   assert.equal(checkGuardOrigin(new Request(url, { method: "POST", headers: { "Sec-Fetch-Site": "cross-site" } })).status, 403);
   assert.equal(checkGuardOrigin(new Request(url, { method: "POST", headers: { Origin: "null" } })).status, 403);
+  const internal = "http://localhost:3000/api/guards";
+  const addressed = { Host: "127.0.0.1:3000", Origin: "http://127.0.0.1:3000" };
+  assert.equal(checkGuardOrigin(new Request(internal, { method: "POST", headers: addressed })), null);
+  assert.equal(checkGuardOrigin(new Request(internal, { method: "POST", headers: { ...addressed, Origin: "https://other.example" } })).status, 403);
+  assert.equal(checkGuardOrigin(new Request(internal, { method: "POST", headers: { ...addressed, "Sec-Fetch-Site": "cross-site" } })).status, 403);
 });
 
 test("invalid settings and request bodies are rejected before creating a guard", function () {

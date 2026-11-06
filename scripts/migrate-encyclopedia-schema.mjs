@@ -4,6 +4,10 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { DatabaseSync, backup } from "node:sqlite";
 import { isDeepStrictEqual } from "node:util";
+import { readDetail } from "../src/server/encyclopedia/database.ts";
+import { TaskStore } from "../src/server/encyclopedia/store.ts";
+import { reconcileTaskSchema } from "../src/server/encyclopedia/task-schema.ts";
+import { fieldProgress } from "../src/types/encyclopedia.ts";
 import {
   applySchemaMigration,
   migrationPlan,
@@ -39,6 +43,46 @@ const manifest = {
   backup: options.backup,
   applied: false,
 };
+const changedByType = new Map();
+function changedFields(plan) {
+  const changed = new Set();
+  for (const field of plan.definitions) {
+    const old = plan.previous.find(function same(row) { return row.field_key === field.key && row.storage === field.storage; });
+    const description = field.description || "按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。";
+    const mode = field.collectionMode || old?.collection_mode || "evidence_required";
+    if (!old || old.description !== description || old.value_type !== (field.type || "json") || old.collection_mode !== mode)
+      changed.add(field.storage + "." + field.key);
+  }
+  return changed;
+}
+function reconcileTasks(database = options.database, stateFile = options.state) {
+  const config = {
+    database,
+    workspace: path.dirname(path.dirname(stateFile)),
+    dataRoot: path.dirname(path.dirname(options.database)),
+  };
+  if (path.resolve(config.workspace, "panel", "state.sqlite") !== stateFile)
+    throw Error("Task state must be stored at <workspace>/panel/state.sqlite");
+  const store = new TaskStore(config);
+  let count = 0;
+  try {
+    for (const summary of store.listSummaries()) {
+      const task = store.get(summary.entityId);
+      let detail;
+      try { detail = readDetail(config, task.entityId); }
+      catch (error) {
+        if (error.code === "ENTRY_NOT_FOUND") { store.removeTask(task.entityId); continue; }
+        throw error;
+      }
+      if (reconcileTaskSchema(task, detail, changedByType.get(detail.type))) {
+        task.filled = fieldProgress(detail.fields).filled;
+        store.save(task, "schema_migrated");
+        count++;
+      }
+    }
+  } finally { store.close(); }
+  return count;
+}
 function saveManifest() {
   fs.writeFileSync(
     path.join(options.backup, "manifest.json"),
@@ -51,7 +95,7 @@ function log(message) {
 function inspect(db) {
   const identities = db
     .prepare(
-      "SELECT e.id,e.name,p.type_key FROM entities e JOIN wiki_entry_profiles p ON p.entity_id=e.id ORDER BY e.id",
+      "SELECT e.id,e.name,p.type_key,p.version,p.updated_at FROM entities e JOIN wiki_entry_profiles p ON p.entity_id=e.id ORDER BY e.id",
     )
     .all();
   const evidence = db
@@ -120,6 +164,7 @@ try {
   source.exec("PRAGMA busy_timeout=10000");
   const before = inspect(source);
   manifest.plan = migrationPlan(source, contract).map(function type(plan) {
+    changedByType.set(plan.key, changedFields(plan));
     return {
       key: plan.key,
       before: plan.previous.map(function field(row) {
@@ -137,6 +182,8 @@ try {
   source = null;
   const state = new DatabaseSync(options.state, { readOnly: true });
   try {
+    if (state.prepare("SELECT 1 FROM tasks WHERE json_extract(body,'$.desired')='running' LIMIT 1").get())
+      throw Error("Stop collection tasks before migrating; running tasks were detected");
     await backup(state, path.join(options.backup, "state.sqlite"));
   } finally {
     state.close();
@@ -157,6 +204,10 @@ try {
   } finally {
     rehearsal.close();
   }
+  const rehearsalState = path.join(temp, "panel", "state.sqlite");
+  fs.mkdirSync(path.dirname(rehearsalState));
+  fs.copyFileSync(path.join(options.backup, "state.sqlite"), rehearsalState);
+  manifest.rehearsalTasks = reconcileTasks(rehearsalFile, rehearsalState);
   saveManifest();
   log("Rehearsal and full integrity verification passed");
   if (options.apply) {
@@ -177,6 +228,8 @@ try {
     } finally {
       live.close();
     }
+    saveManifest();
+    manifest.reconciledTasks = reconcileTasks();
     saveManifest();
     log("Live readback and integrity verification passed");
   }

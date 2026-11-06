@@ -1,17 +1,18 @@
 "use client";
 
 import { useRef, useState } from "react";
+import type { ModelSelection } from "@/types/model";
 import type {
   BatchAction,
   BatchItemResult,
-  EntrySummary,
 } from "@/types/encyclopedia";
 
 interface Props {
-  category: string;
-  search: string;
-  status: string;
-  entries: EntrySummary[];
+  selectionUrl: string;
+  entries: { id: number }[];
+  label?: string;
+  disabled?: boolean;
+  modelSelection: ModelSelection;
   total: number;
   loading: boolean;
   selected: Set<number>;
@@ -21,7 +22,9 @@ interface Props {
 }
 
 export default function EncyclopediaBatch(props: Props) {
-  const [busy, setBusy] = useState(false);
+  const [working, setBusy] = useState(false);
+  const busy = working || !!props.disabled;
+  const modelReady = !!props.modelSelection.model && !!props.modelSelection.reasoning;
   const [results, setResults] = useState<BatchItemResult[]>([]);
   const [resultPage, setResultPage] = useState(0);
   const [message, setMessage] = useState("");
@@ -48,17 +51,12 @@ export default function EncyclopediaBatch(props: Props) {
     props.onSelection(ids);
   }
   async function selectAll() {
-    if (locked.current) return;
+    if (locked.current || props.disabled) return;
     lock(true);
     setMessage("");
     try {
-      const params = new URLSearchParams({
-        q: props.search,
-        status: props.status,
-        selection: "all",
-      });
       const response = await fetch(
-        "/api/encyclopedia/categories/" + props.category + "?" + params,
+        props.selectionUrl,
         { cache: "no-store" },
       );
       const body = await response.json();
@@ -76,15 +74,33 @@ export default function EncyclopediaBatch(props: Props) {
     }
   }
   async function operate(action: BatchAction) {
-    if (locked.current || !props.selected.size) return;
+    if (locked.current || props.disabled || !props.selected.size) return;
+    if (action !== "stop" && !modelReady) return;
     lock(true);
     setResults([]);
     setResultPage(0);
-    const ids = [...props.selected].sort(function ascending(a, b) {
+    let ids = [...props.selected].sort(function ascending(a, b) {
       return a - b;
     });
     const collected: BatchItemResult[] = [];
     try {
+      if (action === "continue") {
+        setMessage("正在按完成度从高到低安排所选任务…");
+        const response = await fetch("/api/encyclopedia/batch/order", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ids }),
+        });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || "无法确定任务执行顺序。");
+        const ordered = body.ids;
+        const requested = new Set(ids);
+        if (!Array.isArray(ordered) || ordered.length !== ids.length || new Set(ordered).size !== ids.length ||
+          ordered.some(function unexpected(id: number) { return !requested.has(id); })) {
+          throw new Error("任务排序结果不完整，请重试。");
+        }
+        ids = ordered;
+      }
       // 分批发送以保持页面可响应；每批服务端逐条报告结果。
       for (let offset = 0; offset < ids.length; offset += 50) {
         setMessage(
@@ -98,7 +114,7 @@ export default function EncyclopediaBatch(props: Props) {
         const response = await fetch("/api/encyclopedia/batch", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action, ids: chunk }),
+          body: JSON.stringify({ action, ids: chunk, ...props.modelSelection }),
         });
         const body = await response.json();
         if (!response.ok) throw new Error(body.error || "批量请求失败。");
@@ -133,7 +149,7 @@ export default function EncyclopediaBatch(props: Props) {
   const counts = { success: 0, skipped: 0, failed: 0 };
   for (const item of results) counts[item.status]++;
   return (
-    <section className="ep-batch" aria-label="批量管理词条" aria-busy={busy}>
+    <section className="ep-batch" aria-label={props.label || "批量管理词条"} aria-busy={busy}>
       <div className="ep-batch-toolbar">
         <label className="ep-check-label">
           <input
@@ -171,7 +187,7 @@ export default function EncyclopediaBatch(props: Props) {
         <div className="ep-actions">
           <button
             className="ep-button ep-primary"
-            disabled={busy || !props.selected.size}
+            disabled={busy || !props.selected.size || !modelReady}
             onClick={function resume() {
               void operate("continue");
             }}
@@ -180,7 +196,7 @@ export default function EncyclopediaBatch(props: Props) {
           </button>
           <button
             className="ep-button"
-            disabled={busy || !props.selected.size}
+            disabled={busy || !props.selected.size || !modelReady}
             onClick={function restart() {
               void operate("restart");
             }}
@@ -196,10 +212,17 @@ export default function EncyclopediaBatch(props: Props) {
           >
             批量停止
           </button>
+          <button
+            className="ep-button"
+            disabled={busy || !props.selected.size || !modelReady}
+            onClick={function configure() { void operate("configure"); }}
+          >
+            应用模型到所选任务
+          </button>
         </div>
       </div>
       <p className="ep-muted">
-        开始只处理未检查字段，跳过已完成词条；重新开始会清零处理进度，保留现有内容。停止会中断并删除会话，保留已处理结果。运行或排队中的词条不会被重复启动。
+        批量开始按完成度从高到低入队，与页面排序无关；完成度相同时按 ID 排列。开始只处理未检查字段，跳过已完成词条；重新开始会清零处理进度，保留现有内容。停止会中断并删除会话，保留已处理结果。运行或排队中的词条不会被重复启动。
       </p>
       {message && <p role="status">{message}</p>}
       {results.length > 0 && (

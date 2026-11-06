@@ -19,6 +19,9 @@ import type {
   BatchAction,
 } from "@/types/encyclopedia";
 import type { GuardSnapshot } from "@/types/guard";
+import { encyclopediaDefaultModel } from "@/types/model";
+import { entrySortOptions, taskSortOptions, readEntrySort, readTaskSort } from "@/types/entry-sort";
+import type { TaskSort } from "@/types/entry-sort";
 import GuardTerminal from "./GuardTerminal";
 import ModelSelector from "./ModelSelector";
 import EncyclopediaBatch from "./EncyclopediaBatch";
@@ -56,6 +59,7 @@ interface HomeResponse {
     excluded: number;
   })[];
   workspace: string;
+  activeCount: number;
 }
 const activePhases = new Set([
   "queued",
@@ -71,31 +75,59 @@ async function readJson<T>(url: string, signal?: AbortSignal): Promise<T> {
   return body;
 }
 
+function queueLabel(task: EntryTask): string {
+  const queue = task.displayQueue;
+  if (!queue) return "";
+  if (queue.state === "waiting") return "全局排队第 " + queue.position + " 位";
+  if (queue.state === "delayed") return "等待重试或恢复，暂未就绪";
+  if (queue.state === "stopping") return "正在停止";
+  if (queue.state === "inactive") return "未在执行队列";
+  if (task.phase === "retrying") return "等待重试 · 保留执行名额";
+  if (task.phase === "blocked") return "等待处理 · 保留执行名额";
+  if (task.phase === "stopping" || task.phase === "completed") return "正在结束 · 占用执行名额";
+  return "执行中 · 占用执行名额";
+}
+
 export default function EncyclopediaPanel({ view }: { view: View }) {
   const [home, setHome] = useState<HomeResponse | null>(null);
   const [entries, setEntries] = useState<EntriesResponse | null>(null);
   const [detail, setDetail] = useState<DetailResponse | null>(null);
   const [tasks, setTasks] = useState<EntryTask[]>([]);
+  const [activeCount, setActiveCount] = useState(0);
+  const [taskPage, setTaskPage] = useState(1);
+  const [taskPages, setTaskPages] = useState(1);
+  const [totalTasks, setTotalTasks] = useState(0);
+  const [taskCategory, setTaskCategory] = useState("all");
+  const [filteredActiveCount, setFilteredActiveCount] = useState(0);
+  const [loadedTaskView, setLoadedTaskView] = useState("");
   const [error, setError] = useState("");
+  const [operationMessage, setOperationMessage] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<number | null>(null);
   const [query, setQuery] = useState("");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
   const [selectedStatus, setStatus] = useState("all");
+  const [selectedSort, setSort] = useState<TaskSort>("default");
+  const sort = view.kind !== "running" && selectedSort === "execution" ? "default" : selectedSort;
   // 热更新可能保留已删除的筛选值，回退到“全部”后再请求列表。
   const status = taskFilters.some(function available(filter) {
     return filter.value === selectedStatus;
   }) ? selectedStatus : "all";
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [selectedTaskIds, setSelectedTaskIds] = useState<Set<number>>(new Set());
   const [batchBusy, setBatchBusy] = useState(false);
+  const [runningBatchBusy, setRunningBatchBusy] = useState(false);
   const [downloadingFields, setDownloadingFields] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [exportMessage, setExportMessage] = useState("");
   const exportController = useRef<AbortController | null>(null);
+  const fieldsController = useRef<AbortController | null>(null);
   const [filter, setFilter] = useState("all");
   const [fieldSearch, setFieldSearch] = useState("");
   const [showHistory, setShowHistory] = useState(false);
+  const taskView = taskCategory + ":" + showHistory + ":" + taskPage + ":" + sort;
+  const tasksLoading = loadedTaskView !== taskView;
   const [selection, setSelection] = useState({ model: "", reasoning: "" });
   const [connected, setConnected] = useState(false);
   const detailVersion = useRef("");
@@ -107,7 +139,10 @@ export default function EncyclopediaPanel({ view }: { view: View }) {
     return item.key === categoryKey;
   });
   useEffect(function watchExport() {
-    return function cleanup() { exportController.current?.abort(); };
+    return function cleanup() {
+      exportController.current?.abort();
+      fieldsController.current?.abort();
+    };
   }, []);
 
   async function downloadCompleted() {
@@ -152,7 +187,7 @@ export default function EncyclopediaPanel({ view }: { view: View }) {
             "&page=" +
             page +
             "&status=" +
-            encodeURIComponent(status),
+            encodeURIComponent(status) + "&sort=" + sort,
           signal,
         );
         if (!signal?.aborted && version === refreshVersion.current)
@@ -166,7 +201,7 @@ export default function EncyclopediaPanel({ view }: { view: View }) {
           ),
         );
     },
-    [kind, categoryKey, entryId, search, page, status],
+    [kind, categoryKey, entryId, search, page, status, sort],
   );
   useEffect(
     function loadPage() {
@@ -191,61 +226,54 @@ export default function EncyclopediaPanel({ view }: { view: View }) {
     [refresh],
   );
   useEffect(
-    function followTasks() {
-      const events = new EventSource("/api/encyclopedia/events");
+    function followPage() {
+      const params = new URLSearchParams({
+        view: kind, category: kind === "running" ? taskCategory : categoryKey, id: String(entryId),
+        q: search, status, sort, page: String(kind === "running" ? taskPage : page), history: String(showHistory),
+      });
+      const events = new EventSource("/api/encyclopedia/events?" + params);
       const controller = new AbortController();
       let timer: ReturnType<typeof setTimeout> | undefined;
-      let phases = "";
-      events.onopen = function ready() {
-        setConnected(true);
-      };
-      events.onerror = function disconnected() {
-        setConnected(false);
-      };
-      events.addEventListener("tasks", function changed(event: MessageEvent) {
-        const body = JSON.parse(event.data) as { tasks: EntryTask[] };
-        setTasks(body.tasks);
-        const nextPhases = body.tasks
-          .map(function phase(task) {
-            return task.entityId + ":" + task.phase + ":" + task.desired;
-          })
-          .join(",");
-        if (kind === "category" && status !== "all" && phases !== nextPhases) {
-          phases = nextPhases;
-          clearTimeout(timer);
-          timer = setTimeout(function updateCategory() {
-            void refresh(controller.signal).catch(function failed(failure) {
-              if (!controller.signal.aborted) setError(String(failure));
-            });
-          }, 500);
+      events.onopen = function ready() { if (!controller.signal.aborted) setConnected(true); };
+      events.onerror = function disconnected() { if (!controller.signal.aborted) setConnected(false); };
+      events.addEventListener("view", function changed(event: MessageEvent) {
+        if (controller.signal.aborted) return;
+        const body = JSON.parse(event.data);
+        setActiveCount(body.activeCount);
+        if (body.home) setHome(body.home);
+        if (body.entries) setEntries(body.entries);
+        if (body.tasks) {
+          setTasks(body.tasks);
+          setTaskPages(body.pages);
+          setTotalTasks(body.totalTasks);
+          setFilteredActiveCount(body.filteredActiveCount);
+          setLoadedTaskView(taskCategory + ":" + showHistory + ":" + body.page + ":" + sort);
+          if (body.page !== taskPage) setTaskPage(body.page);
         }
-        const task = body.tasks.find(function current(item) {
-          return item.entityId === entryId;
-        });
-        if (
-          kind === "entry" &&
-          task &&
-          task.updatedAt !== detailVersion.current
-        ) {
-          detailVersion.current = task.updatedAt;
-          clearTimeout(timer);
-          timer = setTimeout(function update() {
-            void refresh(controller.signal).catch(function failed(failure) {
-              if (!controller.signal.aborted) setError(String(failure));
-            });
-          }, 500);
+        if (body.detailRevision && body.detailRevision !== detailVersion.current) {
+          const hadVersion = detailVersion.current !== "";
+          detailVersion.current = body.detailRevision;
+          if (hadVersion) {
+            clearTimeout(timer);
+            timer = setTimeout(function updateDetail() {
+              void refresh(controller.signal).catch(function failed(failure) {
+                if (!controller.signal.aborted) setError(String(failure));
+              });
+            }, 300);
+          }
         }
       });
       return function cleanup() {
         events.close();
         controller.abort();
         clearTimeout(timer);
+        detailVersion.current = "";
       };
     },
-    [entryId, kind, refresh, status],
+    [entryId, categoryKey, kind, refresh, status, search, page, showHistory, taskPage, taskCategory, sort],
   );
 
-  // 固定回调身份，避免模型选择器因父组件刷新而反复读取缓存。
+
   const modelChanged = useCallback(function modelChanged(
     model: string,
     reasoning: string,
@@ -259,6 +287,7 @@ export default function EncyclopediaPanel({ view }: { view: View }) {
   async function operate(id: number, action: BatchAction) {
     setBusy(id);
     setError("");
+    setOperationMessage("");
     try {
       const response = await fetch("/api/encyclopedia/entries/" + id, {
         method: "POST",
@@ -267,6 +296,7 @@ export default function EncyclopediaPanel({ view }: { view: View }) {
       });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || "操作失败。");
+      if (action === "configure") setOperationMessage("模型设置已保存；运行中的任务从下一轮请求生效，已处理进度保留。");
       await refresh();
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : "操作失败。");
@@ -275,13 +305,22 @@ export default function EncyclopediaPanel({ view }: { view: View }) {
     }
   }
   async function downloadCategoryFields() {
-    if (!categoryKey || downloadingFields) return;
+    if (!categoryKey) return;
+    await downloadFields("/api/encyclopedia/categories/" + categoryKey + "/fields", "encyclopedia-" + categoryKey + "-fields.md");
+  }
+  async function downloadAllFields() {
+    await downloadFields("/api/encyclopedia/fields", "encyclopedia-all-fields.md");
+  }
+  async function downloadFields(endpoint: string, filename: string) {
+    if (fieldsController.current) return;
+    const controller = new AbortController();
+    fieldsController.current = controller;
     setDownloadingFields(true);
     setError("");
     try {
       const response = await fetch(
-        "/api/encyclopedia/categories/" + categoryKey + "/fields",
-        { cache: "no-store" },
+        endpoint,
+        { cache: "no-store", signal: controller.signal },
       );
       if (!response.ok) {
         const body = await response.json().catch(function invalid() { return {}; });
@@ -291,15 +330,16 @@ export default function EncyclopediaPanel({ view }: { view: View }) {
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
-      anchor.download = "encyclopedia-" + categoryKey + "-fields.md";
+      anchor.download = filename;
       document.body.appendChild(anchor);
       anchor.click();
       anchor.remove();
       URL.revokeObjectURL(url);
     } catch (failure) {
-      setError(failure instanceof Error ? failure.message : "字段表下载失败。");
+      if (!controller.signal.aborted) setError(failure instanceof Error ? failure.message : "字段表下载失败。");
     } finally {
-      setDownloadingFields(false);
+      fieldsController.current = null;
+      if (!controller.signal.aborted) setDownloadingFields(false);
     }
   }
   function submitSearch(event: FormEvent) {
@@ -309,24 +349,68 @@ export default function EncyclopediaPanel({ view }: { view: View }) {
     setSearch(query.trim());
     setPage(1);
   }
-  function taskFor(id: number, fallback?: EntryTask | null) {
-    return (
-      tasks.find(function match(task) {
-        return task.entityId === id;
-      }) || fallback
-    );
-  }
   const active = tasks.filter(function running(task) {
     return taskFilterGroup(task) === "running";
   });
-  const currentTask = detail ? taskFor(detail.entry.id, detail.task) : null;
+  const currentTask = detail?.task || null;
+  const modelReady = !!selection.model && !!selection.reasoning;
+  function sortControls() {
+    return (
+      <>
+        <label htmlFor="entry-sort">排序方式</label>
+        <select id="entry-sort" value={sort} disabled={batchBusy || runningBatchBusy || busy !== null}
+          onChange={function changeSort(event) {
+            setSort(kind === "running" ? readTaskSort(event.target.value) : readEntrySort(event.target.value));
+            setPage(1);
+            setTaskPage(1);
+            setTasks([]);
+            setLoadedTaskView("");
+            setLoading(true);
+          }}>
+          {(kind === "running" ? taskSortOptions : entrySortOptions).map(function option(item) {
+            return <option key={item.value} value={item.value}>{item.label}</option>;
+          })}
+        </select>
+      </>
+    );
+  }
+  function modelSettings(task?: EntryTask | null) {
+    const locked = batchBusy || runningBatchBusy || busy !== null;
+    return (
+      <section className="ep-settings" aria-label="模型与推理强度">
+        <h2 className="mb-4 font-semibold">模型与推理强度</h2>
+        <ModelSelector
+          model={selection.model}
+          reasoning={selection.reasoning}
+          onChange={modelChanged}
+          defaultSelection={encyclopediaDefaultModel}
+          preferenceKey="encyclopedia.model-selection.v1"
+          locked={locked}
+        />
+        <p className="ep-muted">
+          默认 GPT-6 Astra / medium，可选择 high 等强度。开始任务时使用以上设置；修改已有任务请点击应用。
+          运行中从下一轮请求生效，保留已处理进度；停止的任务不会自动开始。
+        </p>
+        {task && (
+          <div className="ep-actions mt-4">
+            <span className="ep-muted">任务设置：{task.model} / {task.reasoning}</span>
+            <button className="ep-button" disabled={locked || !modelReady || task.phase === "stopping"}
+              onClick={function apply() { void operate(task.entityId, "configure"); }}>
+              应用到当前任务
+            </button>
+          </div>
+        )}
+      </section>
+    );
+  }
   function controls(id: number, task?: EntryTask | null, excluded = false) {
     const running = task && taskFilterGroup(task) === "running";
+    const controlsBusy = batchBusy || runningBatchBusy;
     return (
       <div className="ep-actions">
         <button
           className="ep-button ep-primary"
-          disabled={busy === id || batchBusy || !!running || excluded || task?.phase === "completed"}
+          disabled={busy === id || controlsBusy || !modelReady || !!running || excluded || task?.phase === "completed"}
           onClick={function start() {
             void operate(id, "continue");
           }}
@@ -336,7 +420,7 @@ export default function EncyclopediaPanel({ view }: { view: View }) {
         </button>
         <button
           className="ep-button"
-          disabled={busy === id || batchBusy || !!running || excluded || !task}
+          disabled={busy === id || controlsBusy || !modelReady || !!running || excluded || !task}
           onClick={function restart() {
             void operate(id, "restart");
           }}
@@ -347,7 +431,7 @@ export default function EncyclopediaPanel({ view }: { view: View }) {
           className="ep-button"
           disabled={
             busy === id ||
-            batchBusy ||
+            controlsBusy ||
             !task ||
             (task.desired === "stopped" &&
               !task.sessionId &&
@@ -364,7 +448,7 @@ export default function EncyclopediaPanel({ view }: { view: View }) {
     );
   }
   function renderEntry(entry: EntrySummary) {
-    const task = taskFor(entry.id, entry.task);
+    const task = entry.task;
     return (
       <article className="ep-entry-card" key={entry.id}>
         <div className="ep-card-top">
@@ -398,7 +482,7 @@ export default function EncyclopediaPanel({ view }: { view: View }) {
         {entry.nameEn && entry.nameEn !== entry.name && (
           <p className="ep-subtitle">{entry.nameEn}</p>
         )}
-        <TaskProgress task={task} counts={task && Array.isArray(task.processedFields) ? undefined : entry.progress} />
+        <TaskProgress task={task} counts={entry.progress} />
         <div className="ep-card-bottom">
           <span>
             {task?.mode === "restart" ? "重新处理全部字段" : "开始后只处理未检查字段"}
@@ -476,7 +560,7 @@ export default function EncyclopediaPanel({ view }: { view: View }) {
             href="/encyclopedia/running"
             className={kind === "running" ? "ep-nav-active" : ""}
           >
-            运行中的任务<span className="ep-nav-count">{active.length}</span>
+            运行中的任务<span className="ep-nav-count">{activeCount}</span>
           </Link>
         </nav>
         <span className="ep-connection">
@@ -522,6 +606,7 @@ export default function EncyclopediaPanel({ view }: { view: View }) {
             </button>
           </div>
         )}
+        {operationMessage && <p role="status" className="ep-notice">{operationMessage}</p>}
         {kind === "home" && (
           <>
             <section className="ep-hero">
@@ -552,7 +637,7 @@ export default function EncyclopediaPanel({ view }: { view: View }) {
                 <Link href="/encyclopedia/running" className="ep-running-link">
                   <span>
                     <i className="ep-live-dot" />
-                    {active.length} 个任务进行中
+                    {activeCount} 个任务进行中
                   </span>
                   <span>查看任务 ↗</span>
                 </Link>
@@ -572,7 +657,9 @@ export default function EncyclopediaPanel({ view }: { view: View }) {
             </section>
             <div className="ep-section-title">
               <h2>探索词条库</h2>
-              <span>直接读取本地数据库 · 按原始 ID 排序</span>
+              <button className="ep-button" onClick={downloadAllFields} disabled={downloadingFields} aria-busy={downloadingFields}>
+                {downloadingFields ? "正在导出字段…" : "导出全部分类字段 · Markdown"}
+              </button>
             </div>
             <div className="ep-categories">
               {categories.map(function tile(item) {
@@ -650,6 +737,7 @@ export default function EncyclopediaPanel({ view }: { view: View }) {
                 </button>
               </form>
             </div>
+            {modelSettings()}
             <div className="ep-status-filter">
               <label htmlFor="entry-status">任务状态</label>
               <select
@@ -670,15 +758,15 @@ export default function EncyclopediaPanel({ view }: { view: View }) {
                   );
                 })}
               </select>
+              {sortControls()}
               <span className="ep-muted">
                 “已完成”表示所有可处理字段均已检查；“完成部分”包含已启动但处理了 0 个字段就停止的任务。
               </span>
             </div>
             <EncyclopediaBatch
               key={categoryKey + ":" + search + ":" + status}
-              category={categoryKey}
-              search={search}
-              status={status}
+              modelSelection={selection}
+              selectionUrl={"/api/encyclopedia/categories/" + categoryKey + "?" + new URLSearchParams({ q: search, status, sort, selection: "all" })}
               entries={entries?.entries || []}
               total={entries?.total || 0}
               loading={loading}
@@ -739,36 +827,110 @@ export default function EncyclopediaPanel({ view }: { view: View }) {
                   个词条，其余自动排队。关闭网页后，本地服务继续运行。
                 </p>
               </div>
-              <span className="ep-count-pill">{active.length} 个活动任务</span>
+              <span className="ep-count-pill">{tasksLoading ? "…" : filteredActiveCount} 个活动任务</span>
             </div>
+            {modelSettings()}
+            <div className="ep-status-filter">
+              <label htmlFor="task-category">词条分类</label>
+              <select
+                id="task-category"
+                value={taskCategory}
+                disabled={runningBatchBusy || busy !== null}
+                onChange={function changeCategory(event) {
+                  setTaskCategory(event.target.value);
+                  setTaskPage(1);
+                  setSelectedTaskIds(new Set());
+                  setTasks([]);
+                  setConnected(false);
+                }}
+              >
+                <option value="all">全部分类</option>
+                {categories.map(function option(category) {
+                  return <option key={category.key} value={category.key}>{category.name}</option>;
+                })}
+              </select>
+              {sortControls()}
+              <span className="ep-muted">列表、分页和跨页全选均按当前分类筛选。</span>
+            </div>
+            {sort === "execution" && (
+              <p className="ep-muted mb-4">
+                占用执行名额的任务在前，其余按实际入队次序排列；最多同时执行 2 个任务。
+                排队序号按全部分类计算，未到重试时间的任务暂不参与排队；停止和完成的任务排在最后。
+              </p>
+            )}
             <div className="ep-tabs">
               <button
                 className={!showHistory ? "selected" : ""}
+                disabled={runningBatchBusy || busy !== null}
                 onClick={function running() {
+                  if (!showHistory) return;
                   setShowHistory(false);
+                  setTaskPage(1);
+                  setSelectedTaskIds(new Set());
+                  setTasks([]);
+                  setConnected(false);
                 }}
               >
-                正在进行 {active.length}
+                正在进行 {tasksLoading ? "…" : filteredActiveCount}
               </button>
               <button
                 className={showHistory ? "selected" : ""}
+                disabled={runningBatchBusy || busy !== null}
                 onClick={function history() {
+                  if (showHistory) return;
                   setShowHistory(true);
+                  setTaskPage(1);
+                  setSelectedTaskIds(new Set());
+                  setTasks([]);
+                  setConnected(false);
                 }}
               >
-                全部任务 {tasks.length}
+                全部任务 {tasksLoading ? "…" : totalTasks}
               </button>
             </div>
+            <EncyclopediaBatch
+              key={"tasks:" + taskCategory + ":" + showHistory}
+              modelSelection={selection}
+              label="运行任务批量操作"
+              selectionUrl={"/api/encyclopedia/tasks?" + new URLSearchParams({ history: String(showHistory), category: taskCategory, sort, selection: "all" })}
+              entries={(showHistory ? tasks : active).map(function selectable(task) { return { id: task.entityId }; })}
+              total={tasksLoading ? 0 : showHistory ? totalTasks : filteredActiveCount}
+              loading={loading || !connected || tasksLoading}
+              disabled={busy !== null}
+              selected={selectedTaskIds}
+              onSelection={setSelectedTaskIds}
+              onBusy={setRunningBatchBusy}
+              onRefresh={refresh}
+            />
+            {tasksLoading && <p className="ep-loading" role="status">正在读取任务…</p>}
             <div className="ep-task-list">
               {(showHistory ? tasks : active).map(function taskRow(task) {
                 return (
                   <article className="ep-task-row" key={task.entityId}>
                     <div className="ep-task-main">
                       <div className="ep-card-top">
-                        <span className="ep-id">
+                        <label className="ep-check-label ep-id">
+                          <input
+                            type="checkbox"
+                            aria-label={"选择任务 " + task.name}
+                            checked={selectedTaskIds.has(task.entityId)}
+                            disabled={runningBatchBusy}
+                            onChange={function toggle(event) {
+                              const checked = event.target.checked;
+                              setSelectedTaskIds(function update(previous) {
+                                const next = new Set(previous);
+                                if (checked) next.add(task.entityId);
+                                else next.delete(task.entityId);
+                                return next;
+                              });
+                            }}
+                          />
                           #{task.entityId} · {task.mode === "restart" ? "重新开始" : "开始"}
-                        </span>
+                        </label>
                         <TaskStatus task={task} />
+                        {sort === "execution" && task.displayQueue && (
+                          <span className="ep-badge">{queueLabel(task)}</span>
+                        )}
                       </div>
                       <Link
                         className="ep-entry-title"
@@ -777,6 +939,7 @@ export default function EncyclopediaPanel({ view }: { view: View }) {
                         {task.name} ↗
                       </Link>
                       <p className="ep-muted">{task.message}</p>
+                      <p className="ep-muted">任务设置：{task.model} / {task.reasoning}</p>
                     </div>
                     <div className="ep-task-progress">
                       <TaskProgress task={task} />
@@ -789,11 +952,18 @@ export default function EncyclopediaPanel({ view }: { view: View }) {
                 );
               })}
             </div>
-            {(showHistory ? tasks : active).length === 0 && (
+            {!tasksLoading && taskPages > 1 && (
+              <div className="ep-pagination">
+                <button className="ep-button" disabled={runningBatchBusy || !connected || taskPage <= 1} onClick={function previous() { setTaskPage(taskPage - 1); setTasks([]); setConnected(false); }}>&larr;</button>
+                <span>{taskPage} / {taskPages}</span>
+                <button className="ep-button" disabled={runningBatchBusy || !connected || taskPage >= taskPages} onClick={function next() { setTaskPage(taskPage + 1); setTasks([]); setConnected(false); }}>&rarr;</button>
+              </div>
+            )}
+            {!tasksLoading && (showHistory ? tasks : active).length === 0 && (
               <div className="ep-empty">
                 <span className="ep-empty-symbol">◎</span>
                 <h2>
-                  {showHistory ? "还没有采集任务" : "当前没有运行中的任务"}
+                  {taskCategory !== "all" ? "该分类下没有匹配的任务" : showHistory ? "还没有采集任务" : "当前没有运行中的任务"}
                 </h2>
                 <p>打开一个词条，点击开始搜索，即可在这里跟踪进度。</p>
                 <Link href="/" className="ep-button ep-primary">
@@ -888,22 +1058,7 @@ export default function EncyclopediaPanel({ view }: { view: View }) {
                 </p>
               )}
             </section>
-            <details className="ep-settings">
-              <summary>
-                模型与执行设置{currentTask ? " · " + currentTask.model : ""}
-              </summary>
-              <ModelSelector
-                model={selection.model}
-                reasoning={selection.reasoning}
-                onChange={modelChanged}
-                restorePreference
-                locked={!!currentTask && activePhases.has(currentTask.phase)}
-              />
-              <p className="ep-muted">
-                规则：encyclopedia-collect · 仅处理当前词条 ·
-                临时文件保存在百科工作目录。
-              </p>
-            </details>
+            {modelSettings(currentTask)}
             <div className="ep-section-title">
               <h2>
                 字段信息 <span>{detail.entry.fields.length}</span>

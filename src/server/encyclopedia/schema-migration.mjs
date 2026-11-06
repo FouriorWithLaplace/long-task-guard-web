@@ -31,6 +31,16 @@ function hasTable(db, name) {
   );
 }
 
+export function preserveNonNameEnglishValue(legacyName, aliases) {
+  if (legacyName == null || typeof legacyName === "string") return aliases;
+  const retained = {
+    legacy_english_name: legacyName,
+    note: "旧英文名称字段包含非名称数据，保留待复核，不作为机构英文名。",
+  };
+  if (aliases == null || aliases === "") return [retained];
+  return [aliases, retained];
+}
+
 export function migrationPlan(db, contract) {
   const types = db.prepare("SELECT * FROM wiki_entry_types ORDER BY key").all();
   const plans = [];
@@ -392,6 +402,7 @@ export function applySchemaMigration(db, contract, fingerprint) {
   if (db.prepare("PRAGMA foreign_key_check").get())
     throw Error("Source database has foreign-key violations");
   const plans = migrationPlan(db, contract);
+  const previousRevision = Number(db.prepare("SELECT max(version) version FROM wiki_entry_schema_migrations").get()?.version || 0);
   const removed = db
     .prepare(
       "SELECT entity_id FROM wiki_entry_profiles WHERE type_key IN (SELECT value FROM json_each(?))",
@@ -507,20 +518,23 @@ export function applySchemaMigration(db, contract, fingerprint) {
       for (const row of rows.iterate()) {
         const original = entryValues(db, row, plan.previous);
         const targetType =
-          plan.key === "lecture"
+          plan.key === "lecture" && previousRevision < 3
             ? contract.classifyLearningEntry(row.name, original.fields)
             : plan.key;
         const target = byKey.get(targetType);
         const context =
-          plan.key === "device"
+          plan.key === "device" && previousRevision < 3
             ? deviceContext(db, row.entity_id, row.cover_url)
             : {};
+        context.nameEn = row.name_en;
         const values = contract.transformEntry(
           targetType,
           original.fields,
           original.sections,
           context,
         );
+        if (targetType === "org")
+          values.fields.aliases = preserveNonNameEnglishValue(original.fields.english_name, values.fields.aliases);
         const fields = {},
           sections = {};
         for (const definition of target.definitions)
@@ -534,7 +548,8 @@ export function applySchemaMigration(db, contract, fingerprint) {
         // identity slot when its former duplicate column is removed.
         const english =
           row.name_en ||
-          (["device", ...contract.FREE_TYPES].includes(plan.key)
+          (["device", "org", ...contract.FREE_TYPES].includes(plan.key)
+            && typeof original.fields.english_name === "string"
             ? original.fields.english_name
             : null);
         if (english && !row.name_en)
@@ -613,6 +628,12 @@ export function applySchemaMigration(db, contract, fingerprint) {
             "fields.specifications",
           );
         }
+        if (targetType === "org") {
+          if (typeof original.fields.english_name === "string")
+            mappedEvidence.run("identity.name_en", row.entity_id, "fields.english_name");
+          if (original.fields.english_name != null && (typeof original.fields.english_name !== "string" || row.name_en && row.name_en !== original.fields.english_name))
+            mappedEvidence.run("fields.aliases", row.entity_id, "fields.english_name");
+        }
         count++;
       }
       report.types.push({
@@ -676,7 +697,7 @@ export function applySchemaMigration(db, contract, fingerprint) {
           item.type || "json",
           item.description ||
             "按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。",
-          item.old?.collection_mode || "evidence_required",
+          item.collectionMode || item.old?.collection_mode || "evidence_required",
           contract.SCHEMA_REVISION,
         );
         // Keep established collection rules only where the field's contract is unchanged.

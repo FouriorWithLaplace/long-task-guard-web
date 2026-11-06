@@ -12,12 +12,14 @@ import {
   originalPath,
 } from "../src/server/encyclopedia/database.ts";
 import { TaskStore } from "../src/server/encyclopedia/store.ts";
+import { readAllFieldMarkdown } from "../src/server/encyclopedia/field-export.ts";
 import {
   EntryWriter,
   parseFieldResult,
 } from "../src/server/encyclopedia/writer.ts";
 import { EncyclopediaManager } from "../src/server/encyclopedia/manager.ts";
-import { assertCurrentTaskProtocol, batchOperate, parseBatch } from "../src/server/encyclopedia/batch.ts";
+import { assertCurrentTaskProtocol, batchOperate, orderBatchIds, parseBatch, parseBatchIds } from "../src/server/encyclopedia/batch.ts";
+import { resolveTaskModel } from "../src/server/encyclopedia/model-settings.ts";
 import { fieldProgress, taskProgress, hasFieldValue, processedFieldKeys, taskFilterGroup, taskFilters } from "../src/types/encyclopedia.ts";
 
 test("legacy task snapshots render confirmed progress without restoring explicitly reset progress", function () {
@@ -575,6 +577,37 @@ test("category field markdown includes all subtype fields and marks protected fi
   }, /分类/);
 });
 
+test("all-category field export reads live physical columns and labels without loading entry content", function () {
+  const config = fixture();
+  const first = readAllFieldMarkdown(config);
+  assert.match(first, /^## 书籍$/m);
+  assert.match(first, /^## 论文$/m);
+  assert.match(first, /^## 科学词条$/m);
+  assert.match(first, /\| publisher \| 出版社 \| TEXT \| fields\.publisher/);
+  assert.match(first, /\| entity_id \| — \| INTEGER/);
+  assert.doesNotMatch(first, /Old publisher|Original abstract|Test book 1/);
+  const db = open(config);
+  try {
+    db.exec("ALTER TABLE wiki_type_book ADD COLUMN live_column TEXT");
+    db.exec("CREATE TABLE wiki_type_new_kind(entity_id INTEGER PRIMARY KEY, new_field TEXT)");
+    db.exec("CREATE TABLE wiki_type_code(entity_id INTEGER PRIMARY KEY, code_field TEXT)");
+    db.prepare("UPDATE wiki_column_fields SET label=?,description=? WHERE column_name='publisher'")
+      .run("最新出版社名", "甲|乙\n第二行");
+    // Dictionary-only fields must not masquerade as columns that exist in the database.
+    db.exec("INSERT INTO wiki_column_fields(type_key,table_name,column_name,field_key,label,storage) VALUES('book','wiki_type_book','ghost','ghost','不存在的列','fields')");
+  } finally { db.close(); }
+  const second = readAllFieldMarkdown(config);
+  assert.match(second, /\| publisher \| 最新出版社名 \|/);
+  assert.ok(second.includes("甲\\|乙<br>第二行"));
+  assert.match(second, /\| live_column \| — \| TEXT/);
+  assert.match(second, /### new_kind（new_kind）/);
+  assert.match(second, /\| new_field \|/);
+  assert.match(second, /^## 其他数据库类型$/m);
+  assert.match(second, /\| code_field \|/);
+  assert.doesNotMatch(second, /不存在的列|\| ghost \|/);
+  assert.equal(fs.existsSync(path.join(config.workspace, "panel")), false);
+});
+
 test("stop deletes the session, preserves confirmed fields, and start continues in a new session", async function (t) {
   const { manager, clients, calls } = runner(t, fixture());
   for (const id of [1, 2, 3]) manager.start(id, "test", "high");
@@ -695,6 +728,154 @@ test("stop deletes the session even when database reconciliation fails", async f
   manager.start(1, "test", "high");
   await settle();
   assert.equal(manager.get(1).phase, "running");
+});
+
+test("task model defaults override catalog low effort and validate explicit changes", function () {
+  const catalog = { models: [
+    { id: "test", isDefault: true, defaultReasoningEffort: "low", reasoningEfforts: [{ value: "low" }, { value: "high" }] },
+    { id: "gpt-6-astra", isDefault: false, defaultReasoningEffort: "low", reasoningEfforts: [{ value: "low" }, { value: "medium" }, { value: "high" }] },
+  ] };
+  const existing = { model: "test", reasoning: "low" };
+  assert.deepEqual(resolveTaskModel(catalog, {}), { model: "gpt-6-astra", reasoning: "medium" });
+  assert.deepEqual(resolveTaskModel(catalog, {}, existing), existing);
+  assert.deepEqual(resolveTaskModel(catalog, { model: "gpt-6-astra" }, existing), { model: "gpt-6-astra", reasoning: "medium" });
+  assert.deepEqual(resolveTaskModel(catalog, { model: "gpt-6-astra", reasoning: "high" }, existing), { model: "gpt-6-astra", reasoning: "high" });
+  assert.throws(function unsupported() { resolveTaskModel(catalog, { reasoning: "ultra" }); }, /推理强度/);
+  assert.throws(function missing() { resolveTaskModel(catalog, { model: "missing" }); }, /模型不可用/);
+  assert.throws(function malformed() { resolveTaskModel(catalog, { reasoning: 3 }); }, /字符串/);
+  assert.throws(function noCatalog() { resolveTaskModel({ models: [] }, {}); }, /模型不可用/);
+});
+
+test("model changes preserve running progress and are sent on the next turn", async function (t) {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
+  const { manager, clients, calls } = runner(t, fixture());
+  manager.start(1, "test", "low");
+  await settle();
+  const client = clients[0];
+  client.tool("submit_field", proposal());
+  const before = manager.get(1);
+  manager.configure(1, "gpt-6-astra", "high");
+  const after = manager.get(1);
+  for (const key of ["phase", "desired", "generation", "runId", "sessionId", "processedFields", "results"]) {
+    assert.deepEqual(after[key], before[key]);
+  }
+  assert.equal(calls.filter(function sent(call) { return call.method === "turn/start"; }).length, 1);
+  assert.ok(!calls.some(function interrupted(call) { return call.method === "turn/interrupt"; }));
+  client.events.onNotification("turn/completed", {
+    threadId: client.sessionId, turn: { id: "turn-2", status: "completed" },
+  });
+  t.mock.timers.tick(1500);
+  await settle();
+  const turns = calls.filter(function sent(call) { return call.method === "turn/start"; });
+  assert.equal(turns.length, 2);
+  assert.equal(turns[0].params.effort, "low");
+  assert.equal(turns[1].params.model, "gpt-6-astra");
+  assert.equal(turns[1].params.effort, "high");
+  await manager.stop(1);
+  const stopped = manager.get(1);
+  manager.configure(1, "gpt-6-astra", "medium");
+  await settle();
+  assert.equal(manager.get(1).desired, "stopped");
+  assert.deepEqual(manager.get(1).processedFields, stopped.processedFields);
+  assert.equal(calls.filter(function sent(call) { return call.method === "turn/start"; }).length, 2);
+});
+
+test("batch model settings update queued tasks, isolate failures and skip absent tasks", async function (t) {
+  const { manager, clients } = runner(t, fixture());
+  for (const id of [1, 2, 3]) manager.start(id, "test", "low");
+  await settle();
+  const batch = parseBatch({ action: "configure", ids: [1, 2, 3, 99] });
+  const results = await batchOperate(manager, batch.action, batch.ids, async function settings(task) {
+    if (task.entityId === 2) throw new Error("Unsupported model");
+    return { model: "gpt-6-astra", reasoning: "high" };
+  });
+  assert.deepEqual(results.map(function status(item) { return item.status; }), ["success", "failed", "success", "skipped"]);
+  assert.equal(manager.get(1).reasoning, "high");
+  assert.equal(manager.get(2).reasoning, "low");
+  assert.equal(manager.get(3).reasoning, "high");
+  assert.equal(manager.get(3).phase, "queued");
+  assert.equal(clients.length, 2);
+  await manager.stop(1);
+  await settle();
+  assert.equal(manager.get(3).model, "gpt-6-astra");
+  const stopping = manager.get(2);
+  stopping.phase = "stopping";
+  manager.store.save(stopping);
+  const skipped = await batchOperate(manager, "configure", [2], async function forbidden() {
+    assert.fail("Stopping tasks must be skipped before resolving the model");
+  });
+  assert.equal(skipped[0].status, "skipped");
+  assert.equal(manager.get(2).reasoning, "low");
+});
+
+test("batch continuation orders all selected IDs before splitting into requests", async function () {
+  const submitted = [];
+  const summaries = new Map();
+  for (let id = 1; id <= 75; id++) {
+    summaries.set(id, { entityId: id, phase: "stopped", desired: "stopped", displayProgress: { checked: id, total: 100 } });
+  }
+  const manager = {
+    taskProtocol: 3,
+    store: { getSummary(id) { return summaries.get(id); } },
+    get(id) { return summaries.get(id) || null; },
+    start(id) {
+      submitted.push(id);
+      const task = summaries.get(id);
+      task.desired = "running";
+      task.phase = "queued";
+      return task;
+    },
+  };
+  const ids = parseBatchIds([...summaries.keys()], 50000);
+  const ordered = orderBatchIds(manager, ids);
+  assert.deepEqual(ordered, [...ids].reverse());
+  async function settings() { await Promise.resolve(); return { model: "test", reasoning: "high" }; }
+  for (let offset = 0; offset < ordered.length; offset += 50) {
+    await batchOperate(manager, "continue", ordered.slice(offset, offset + 50), settings);
+  }
+  assert.deepEqual(submitted, ordered);
+  assert.throws(function invalid() { parseBatchIds([1, "2"], 50000); });
+  assert.throws(function tooMany() { parseBatchIds(Array(50001).fill(1), 50000); });
+});
+
+test("batch continuation starts higher completion first and persists enqueue order", async function (t) {
+  t.mock.timers.enable({ apis: ["Date"], now: 10000 });
+  const config = fixture();
+  const first = runner(t, config);
+  // 先用真实提交建立不同完成度：1 为 0%，2 为 1/3，3 为 2/3。
+  for (const id of [1, 2, 3]) {
+    first.manager.start(id, "test", "high");
+    await settle();
+    const client = first.clients.at(-1);
+    if (id >= 2) client.tool("submit_field", proposal());
+    if (id === 3) client.tool("submit_field", proposal("Checked notes", "fields.notes"));
+    await first.manager.stop(id);
+  }
+  const ordered = orderBatchIds(first.manager, [1, 2, 3]);
+  assert.deepEqual(ordered, [3, 2, 1]);
+  first.calls.length = 0;
+  await batchOperate(first.manager, "continue", [1, 2, 3], async function settings() {
+    return { model: "test", reasoning: "high" };
+  });
+  await settle();
+  const sent = first.calls.filter(function turns(call) { return call.method === "turn/start"; });
+  assert.equal(sent.length, 2);
+  assert.match(sent[0].params.input[0].text, /词条 ID=3，/);
+  assert.match(sent[1].params.input[0].text, /词条 ID=2，/);
+  assert.equal(first.manager.get(1).phase, "queued");
+  assert.equal(first.manager.get(3).queuedAt, first.manager.get(1).queuedAt);
+  assert.ok(first.manager.get(3).queueOrder < first.manager.get(2).queueOrder);
+  assert.ok(first.manager.get(2).queueOrder < first.manager.get(1).queueOrder);
+  await first.manager.stop(3);
+  await settle();
+  assert.equal(first.manager.get(1).phase, "running");
+  const lastOrder = first.manager.get(1).queueOrder;
+  await first.manager.stop(1);
+  await first.manager.stop(2);
+  first.manager.dispose();
+  const resumed = runner(t, config);
+  resumed.manager.start(3, "test", "high");
+  assert.ok(resumed.manager.get(3).queueOrder > lastOrder);
 });
 
 test("batch validation deduplicates IDs and rejects malformed or oversized requests", function () {

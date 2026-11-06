@@ -14,8 +14,13 @@ export function guardErrorResponse(error: unknown): Response {
 
 export function checkGuardOrigin(request: Request): Response | null {
   const origin = request.headers.get("origin");
+  const address = new URL(request.url);
+  // Next can use localhost in request.url even when the browser used 127.0.0.1.
+  // Host is the addressed site; cross-site browser requests are still rejected below.
+  const host = request.headers.get("host");
+  if (host) address.host = host;
   // 本机脚本和 AI 客户端可以省略 Origin；浏览器请求仍校验同源。
-  if ((origin !== null && origin !== new URL(request.url).origin) || request.headers.get("sec-fetch-site") === "cross-site") {
+  if ((origin !== null && origin !== address.origin) || request.headers.get("sec-fetch-site") === "cross-site") {
     return Response.json({ error: "请求来源不匹配。" }, { status: 403, headers: guardResponseHeaders });
   }
   return null;

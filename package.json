@@ -3,11 +3,12 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "node scripts/serve.mjs dev",
     "build": "next build",
-    "start": "next start",
+    "start": "node scripts/serve.mjs start",
+    "views:build": "node scripts/page-views.mjs --once --rebuild",
     "lint": "eslint",
-    "test": "node --test tests/model-catalog.test.mjs tests/codex-client.test.mjs tests/guard-runner.test.mjs tests/guard-events.test.mjs tests/guard-manager.test.mjs tests/guard-http.test.mjs tests/project-directory.test.mjs tests/project-picker.test.mjs tests/guard-service.test.mjs tests/guard-terminal.test.mjs tests/terminal-follow.test.mjs tests/encyclopedia.test.mjs tests/encyclopedia-export.test.mjs tests/encyclopedia-migration.test.mjs tests/encyclopedia-task-schema.test.mjs tests/encyclopedia-structured-value.test.mjs"
+    "test": "node --test tests/model-catalog.test.mjs tests/codex-client.test.mjs tests/guard-runner.test.mjs tests/guard-events.test.mjs tests/guard-manager.test.mjs tests/guard-http.test.mjs tests/project-directory.test.mjs tests/project-picker.test.mjs tests/guard-service.test.mjs tests/guard-terminal.test.mjs tests/terminal-follow.test.mjs tests/encyclopedia.test.mjs tests/encyclopedia-export.test.mjs tests/encyclopedia-migration.test.mjs tests/encyclopedia-task-schema.test.mjs tests/encyclopedia-structured-value.test.mjs tests/page-views.test.mjs"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",

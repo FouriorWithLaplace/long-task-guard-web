@@ -3,7 +3,7 @@ import pty from "node-pty";
 import headless from "@xterm/headless";
 import serialization from "@xterm/addon-serialize";
 import type { CodexTerminalTarget } from "./codex-client";
-import { trackOwnedProcess } from "./codex-client";
+import { trackOwnedProcess } from "./codex-client.ts";
 
 export type TerminalTarget = CodexTerminalTarget & { sessionId: string };
 type TerminalEvent = { type: "data" | "end"; data: string };

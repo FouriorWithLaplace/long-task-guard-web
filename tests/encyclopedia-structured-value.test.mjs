@@ -11,3 +11,16 @@ test('device submissions preserve chronology, reject malformed systems and keep 
  const arbitrary={any:['shape',{is:'allowed'}]};
  assert.equal(normalize('concept','fields.content',arbitrary),arbitrary);
 });
+
+test('timeline retains links, assigns stable IDs and rejects impossible dates or reversed intervals', function () {
+ const input = [{date:'2024-02-29',title:'运行',kind:'status',description:'原始记录',state:'occurred',status_after:'运行',source_url:'https://example.test/report'}];
+ const value = normalize('device','fields.timeline',input);
+ assert.ok(value[0].id);
+ assert.equal(value[0].source_url,input[0].source_url);
+ assert.equal(input[0].id,undefined);
+ assert.deepEqual(normalize('device','fields.timeline',value),value);
+ for (const date of ['2025-02-29','2024-04-31','2025-13','2025-00','2025-01-00'])
+   assert.throws(function () { normalize('device','fields.timeline',[{...input[0],date}]); }, /日期/);
+ assert.throws(function () { normalize('device','fields.timeline',[{...input[0],end_date:'2023'}]); }, /结束日期/);
+ assert.throws(function () { normalize('device','fields.timeline',[value[0],value[0]]); }, /不重复/);
+});

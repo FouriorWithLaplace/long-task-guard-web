@@ -4,6 +4,9 @@ import path from "node:path";
 import type { EntryTask, FieldResult } from "../../types/encyclopedia.ts";
 import { panelDirectory } from "./config.ts";
 import type { EncyclopediaPaths } from "./config.ts";
+import { summarizeTask } from "./task-summary.ts";
+import { taskFilterGroup } from "../../types/encyclopedia.ts";
+import type { TaskQueueIndex } from "../../types/task-queue.ts";
 
 export interface WriteIntent {
   id: string;
@@ -31,6 +34,75 @@ export class TaskStore {
       CREATE TABLE IF NOT EXISTS intents(id TEXT PRIMARY KEY,entity_id INTEGER NOT NULL,status TEXT NOT NULL,body TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY,entity_id INTEGER NOT NULL,event TEXT NOT NULL,detail TEXT NOT NULL,created_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS service_lease(id INTEGER PRIMARY KEY CHECK(id=1),owner TEXT NOT NULL,expires_at INTEGER NOT NULL);`);
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS intents_entity_status ON intents(entity_id,status);
+      CREATE INDEX IF NOT EXISTS events_entity_id ON events(entity_id,id);
+      CREATE TABLE IF NOT EXISTS task_summaries(entity_id INTEGER PRIMARY KEY,body TEXT NOT NULL,desired TEXT,phase TEXT,revision INTEGER NOT NULL);
+      CREATE INDEX IF NOT EXISTS task_summaries_desired ON task_summaries(desired);
+      CREATE TABLE IF NOT EXISTS panel_task_changes(seq INTEGER PRIMARY KEY AUTOINCREMENT,entity_id INTEGER NOT NULL);
+      CREATE INDEX IF NOT EXISTS panel_task_changes_entity ON panel_task_changes(entity_id,seq);
+      CREATE TRIGGER IF NOT EXISTS panel_task_insert AFTER INSERT ON tasks BEGIN
+        INSERT INTO panel_task_changes(entity_id) VALUES(NEW.entity_id); END;
+      CREATE TRIGGER IF NOT EXISTS panel_task_update AFTER UPDATE ON tasks BEGIN
+        INSERT INTO panel_task_changes(entity_id) VALUES(NEW.entity_id); END;
+      CREATE TRIGGER IF NOT EXISTS panel_task_delete AFTER DELETE ON tasks BEGIN
+        INSERT INTO panel_task_changes(entity_id) VALUES(OLD.entity_id); END;
+    `);
+    // One-time migration, one task at a time: never allocate the entire legacy body set.
+    const missing = this.db.prepare("SELECT entity_id FROM tasks WHERE entity_id NOT IN (SELECT entity_id FROM task_summaries)").all();
+    for (const row of missing) this.refreshSummary(Number(row.entity_id));
+  }
+  private writeSummary(task: EntryTask) {
+    const revision = Number(this.db.prepare("SELECT max(seq) n FROM panel_task_changes WHERE entity_id=?").get(task.entityId)?.n || 0);
+    this.db.prepare("INSERT INTO task_summaries VALUES(?,?,?,?,?) ON CONFLICT(entity_id) DO UPDATE SET body=excluded.body,desired=excluded.desired,phase=excluded.phase,revision=excluded.revision")
+      .run(task.entityId, JSON.stringify(summarizeTask(task)), task.desired, task.phase, revision);
+  }
+  refreshSummary(id: number) {
+    // The transaction also covers external writes observed by the projection worker.
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const task = this.get(id);
+      if (task) this.writeSummary(task);
+      else this.db.prepare("DELETE FROM task_summaries WHERE entity_id=?").run(id);
+      this.db.exec("COMMIT");
+    } catch (error) { this.db.exec("ROLLBACK"); throw error; }
+  }
+  getSummary(id: number): EntryTask | null {
+    const row = this.db.prepare("SELECT body FROM task_summaries WHERE entity_id=?").get(id);
+    return row ? JSON.parse(String(row.body)) : null;
+  }
+  listSummaries(runningOnly = false): EntryTask[] {
+    const where = runningOnly ? " WHERE desired='running'" : "";
+    return this.db.prepare("SELECT body FROM task_summaries" + where + " ORDER BY entity_id").all().map(function parse(row) {
+      return JSON.parse(String(row.body));
+    });
+  }
+  taskIndex(): TaskQueueIndex[] {
+    return this.db.prepare(`SELECT entity_id,phase,desired,
+      json_extract(body,'$.queuedAt') queued_at,
+      json_extract(body,'$.queueOrder') queue_order,
+      json_extract(body,'$.slotHeld') slot_held,
+      json_extract(body,'$.nextRetryAt') next_retry_at
+      FROM task_summaries ORDER BY entity_id`).all().map(function item(row) {
+      const state = { phase: row.phase as EntryTask["phase"], desired: row.desired as EntryTask["desired"] };
+      const id = Number(row.entity_id);
+      return { id, active: taskFilterGroup(state) === "running", queue: {
+        entityId: id, ...state, queuedAt: String(row.queued_at || ""), queueOrder: Number(row.queue_order || 0),
+        slotHeld: row.slot_held === 1, nextRetryAt: row.next_retry_at ? String(row.next_retry_at) : null,
+      } };
+    });
+  }
+  refreshChangedSummaries() {
+    const rows = this.db.prepare(`SELECT c.entity_id, max(c.seq) seq FROM panel_task_changes c
+      LEFT JOIN task_summaries s ON s.entity_id=c.entity_id
+      GROUP BY c.entity_id HAVING max(c.seq)>coalesce(s.revision,-1)`).all();
+    for (const row of rows) this.refreshSummary(Number(row.entity_id));
+  }
+  changes(after: number) {
+    return this.db.prepare("SELECT seq,entity_id FROM panel_task_changes WHERE seq>? ORDER BY seq").all(after) as { seq: number; entity_id: number }[];
+  }
+  acknowledgeChanges(through: number) {
+    this.db.prepare("DELETE FROM panel_task_changes WHERE seq<=?").run(through);
   }
   get(id: number): EntryTask | null {
     const row = this.db
@@ -49,7 +121,7 @@ export class TaskStore {
   phases(): Map<number, EntryTask["phase"]> {
     const rows = this.db
       .prepare(
-        "SELECT entity_id, json_extract(body, '$.phase') phase FROM tasks",
+        "SELECT entity_id, phase FROM task_summaries",
       )
       .all();
     const phases = new Map<number, EntryTask["phase"]>();
@@ -59,8 +131,10 @@ export class TaskStore {
   }
   removeTask(id: number) {
     this.db.prepare("DELETE FROM tasks WHERE entity_id=?").run(id);
+    this.db.prepare("DELETE FROM task_summaries WHERE entity_id=?").run(id);
   }
   save(task: EntryTask, event?: string) {
+    delete task.displayProgress;
     task.updatedAt = new Date().toISOString();
     this.db.exec("BEGIN IMMEDIATE");
     try {
@@ -69,6 +143,7 @@ export class TaskStore {
           "INSERT INTO tasks VALUES(?,?) ON CONFLICT(entity_id) DO UPDATE SET body=excluded.body",
         )
         .run(task.entityId, JSON.stringify(task));
+      this.writeSummary(task);
       if (event)
         this.db
           .prepare(
@@ -84,6 +159,10 @@ export class TaskStore {
   // 取得服务租约后迁移；合并最新字段结果与删除快照在同一事务中完成。
   migrateTasks() {
     const hasRounds = this.db.prepare("SELECT name FROM sqlite_master WHERE name='rounds'").get();
+    const legacy = this.listSummaries().some(function needsMigration(task) {
+      return "round" in task || ["paused", "pausing"].includes(task.phase) || String(task.desired) === "paused";
+    });
+    if (!hasRounds && !legacy) return;
     this.db.exec("BEGIN IMMEDIATE");
     try {
       for (const current of this.list()) {
@@ -144,6 +223,7 @@ export class TaskStore {
       }
       if (hasRounds) this.db.exec("DROP TABLE rounds");
       this.db.exec("COMMIT");
+      this.refreshChangedSummaries();
     } catch (error) {
       this.db.exec("ROLLBACK");
       throw error;

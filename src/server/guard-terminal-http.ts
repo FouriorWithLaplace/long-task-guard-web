@@ -1,4 +1,4 @@
-import { checkGuardOrigin, guardErrorResponse, guardResponseHeaders, readGuardObject } from "./guard-http";
+import { checkGuardOrigin, guardErrorResponse, guardResponseHeaders, readGuardObject } from "./guard-http.ts";
 import type { GuardTerminalService } from "./guard-terminal-service";
 
 // 终端有独立的生命周期；不通过这些接口开始、暂停任务或发送模型提示词。

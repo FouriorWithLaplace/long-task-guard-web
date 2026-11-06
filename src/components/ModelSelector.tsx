@@ -2,22 +2,17 @@
 
 import { useEffect, useState } from "react";
 import type { ChangeEvent } from "react";
-import type { ModelCatalog, ModelOption } from "@/types/model";
-
-interface ModelSelection {
-  model: string;
-  reasoning: string;
-}
+import type { ModelCatalog, ModelOption, ModelSelection } from "@/types/model";
 
 interface ModelSelectorProps extends ModelSelection {
   onChange: (model: string, reasoning: string) => void;
   locked?: boolean;
   restorePreference?: boolean;
+  defaultSelection?: ModelSelection;
+  preferenceKey?: string;
 }
 
-const preferenceKey = "long-task-guard.model-selection";
-
-function readSelection(): ModelSelection {
+function readSelection(preferenceKey: string, fallback?: ModelSelection): ModelSelection {
   try {
     const source = localStorage.getItem(preferenceKey);
 
@@ -32,10 +27,10 @@ function readSelection(): ModelSelection {
     // 浏览器禁用存储或记录损坏时，仍然可以选择模型。
   }
 
-  return { model: "", reasoning: "" };
+  return fallback || { model: "", reasoning: "" };
 }
 
-function saveSelection(model: string, reasoning: string) {
+function saveSelection(preferenceKey: string, model: string, reasoning: string) {
   try {
     const selection = { model: model, reasoning: reasoning };
     localStorage.setItem(preferenceKey, JSON.stringify(selection));
@@ -95,7 +90,7 @@ function errorMessage(error: unknown): string {
   return "读取模型目录失败，请重试。";
 }
 
-export default function ModelSelector({ model, reasoning, onChange, locked = false, restorePreference = true }: ModelSelectorProps) {
+export default function ModelSelector({ model, reasoning, onChange, locked = false, restorePreference = true, defaultSelection, preferenceKey = "long-task-guard.model-selection" }: ModelSelectorProps) {
   const [catalog, setCatalog] = useState<ModelCatalog>({ version: 1, updatedAt: null, models: [] });
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -116,7 +111,8 @@ export default function ModelSelector({ model, reasoning, onChange, locked = fal
 
         setCatalog(cached);
         if (restorePreference) {
-          const selection = chooseSelection(cached.models, readSelection());
+          const preferred = readSelection(preferenceKey, defaultSelection);
+          const selection = chooseSelection(cached.models, preferred);
           onChange(selection.model, selection.reasoning);
         }
       } catch (failure) {
@@ -135,7 +131,7 @@ export default function ModelSelector({ model, reasoning, onChange, locked = fal
     return function cancelLoading() {
       controller.abort();
     };
-  }, [onChange, restorePreference]);
+  }, [onChange, restorePreference, defaultSelection, preferenceKey]);
 
   async function handleRefresh() {
     if (loading || refreshing || locked) {
@@ -154,7 +150,7 @@ export default function ModelSelector({ model, reasoning, onChange, locked = fal
 
       setCatalog(updated);
       onChange(selection.model, selection.reasoning);
-      saveSelection(selection.model, selection.reasoning);
+      saveSelection(preferenceKey, selection.model, selection.reasoning);
     } catch (failure) {
       setError(errorMessage(failure));
     } finally {
@@ -166,13 +162,13 @@ export default function ModelSelector({ model, reasoning, onChange, locked = fal
     const preferred = { model: event.target.value, reasoning: reasoning };
     const selection = chooseSelection(catalog.models, preferred);
     onChange(selection.model, selection.reasoning);
-    saveSelection(selection.model, selection.reasoning);
+    saveSelection(preferenceKey, selection.model, selection.reasoning);
   }
 
   function handleReasoningChange(event: ChangeEvent<HTMLSelectElement>) {
     const newReasoning = event.target.value;
     onChange(model, newReasoning);
-    saveSelection(model, newReasoning);
+    saveSelection(preferenceKey, model, newReasoning);
   }
 
   let selectedModel: ModelOption | undefined;

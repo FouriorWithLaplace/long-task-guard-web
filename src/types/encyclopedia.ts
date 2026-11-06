@@ -1,3 +1,5 @@
+import type { QueueDisplay } from "./task-queue.ts";
+
 export type Json =
   | null
   | boolean
@@ -119,7 +121,7 @@ export function taskFilterGroup(state?: TaskFilterState | null): TaskFilter {
   return "running";
 }
 export type StartMode = "continue" | "restart";
-export type BatchAction = StartMode | "stop";
+export type BatchAction = StartMode | "stop" | "configure";
 export interface ProgressCounts {
   filled: number;
   checked: number;
@@ -216,6 +218,18 @@ export interface EntryDetail extends EntrySummary {
   dictionaryHash: string;
 }
 export interface EntryTask {
+  // 仅展示响应附带的全局队列位置，不改变任务的持久化状态。
+  displayQueue?: QueueDisplay;
+  displayProgress?: {
+    filled: number | undefined;
+    checked: number;
+    total: number;
+    percent: number;
+    verified: number;
+    pendingReview: number;
+    missing: number;
+    changed: number;
+  };
   entityId: number;
   name: string;
   type: string;
@@ -226,6 +240,7 @@ export interface EntryTask {
   filled: number;
   slotHeld: boolean;
   queuedAt: string;
+  queueOrder?: number;
   runId: string;
   attempt: number;
   generation: number;
@@ -258,6 +273,7 @@ export function processedFieldKeys(task?: EntryTask | null): string[] {
 }
 
 export function taskProgress(task: EntryTask) {
+  if (task.displayProgress) return task.displayProgress;
   const processed = new Set(processedFieldKeys(task));
   let checked = 0;
   let verified = 0;

@@ -1,3 +1,13 @@
+export interface ModelSelection {
+  model: string;
+  reasoning: string;
+}
+
+export const encyclopediaDefaultModel: ModelSelection = {
+  model: "gpt-6-astra",
+  reasoning: "medium",
+};
+
 export interface ReasoningOption {
   value: string;
   description: string;

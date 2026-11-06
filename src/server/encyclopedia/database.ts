@@ -111,7 +111,7 @@ export function readCategories(config: EncyclopediaPaths) {
   }
 }
 
-function markdownCell(value: unknown) {
+export function markdownCell(value: unknown) {
   return String(value ?? "")
     .replace(/\r?\n/g, "<br>")
     .replace(/\|/g, "\\|")

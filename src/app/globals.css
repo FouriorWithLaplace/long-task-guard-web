@@ -54,6 +54,9 @@
   font-size: 13px;
   line-height: 1.7;
 }
+.ep-tabs + .ep-batch {
+  margin-top: 18px;
+}
 .ep-check-label {
   display: inline-flex;
   align-items: center;
@@ -670,6 +673,7 @@ body {
 }
 .ep-task-main .ep-card-top {
   justify-content: flex-start;
+  flex-wrap: wrap;
   margin-bottom: 10px;
 }
 .ep-task-main > p {

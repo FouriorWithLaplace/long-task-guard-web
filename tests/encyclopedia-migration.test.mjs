@@ -7,7 +7,16 @@ import {pathToFileURL} from 'node:url';
 import {DatabaseSync} from 'node:sqlite';
 import {paths} from '../src/server/encyclopedia/config.ts';
 import {exportDatabase} from '../src/server/encyclopedia/export-database.ts';
-import {applySchemaMigration,schemaFingerprint} from '../src/server/encyclopedia/schema-migration.mjs';
+import {applySchemaMigration,schemaFingerprint,preserveNonNameEnglishValue} from '../src/server/encyclopedia/schema-migration.mjs';
+
+test('legacy review objects in English-name columns remain review data', function () {
+ const original = {state:'reviewed',basis:'source evidence'};
+ const aliases = preserveNonNameEnglishValue(original, ['Known alias']);
+ assert.deepEqual(aliases[0], ['Known alias']);
+ assert.deepEqual(aliases[1].legacy_english_name, original);
+ assert.match(aliases[1].note, /非名称数据/);
+ assert.equal(preserveNonNameEnglishValue('English name', null), null);
+});
 
 test('migrate an isolated real-schema subset: values, deletion, triggers, free JSON, foreign keys and idempotence',async function(t){
  const portal=process.env.ENCYCLOPEDIA_PORTAL_ROOT||path.resolve('..','FusionNexus','portal');
@@ -25,6 +34,20 @@ test('migrate an isolated real-schema subset: values, deletion, triggers, free J
  await exportDatabase(paths,file,function states(){return new Map(ids.map(function pair(id){return [id,'completed'];}));},new AbortController().signal);
  const db=new DatabaseSync(file);
  try{
+  // Recreate one legacy organization value even when the source is already upgraded.
+  // This ensures the actual migration runs on every test invocation.
+  const organization=db.prepare("SELECT * FROM wiki_entry_profiles WHERE type_key='org'").get();
+  const legacyName={state:'reviewed',basis:'Synthetic review record, not an English name'};
+  for(const trigger of db.prepare("SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'wiki_columns_%'").all())
+    db.exec('DROP TRIGGER "'+trigger.name+'"');
+  if(!db.prepare('PRAGMA table_info(wiki_type_org)').all().some(function(column){return column.name==='english_name';}))
+    db.exec('ALTER TABLE wiki_type_org ADD COLUMN english_name TEXT');
+  db.prepare("INSERT OR IGNORE INTO wiki_column_fields(type_key,table_name,column_name,field_key,label,group_name,storage,ordinal,value_type,description,collection_mode,contract_version) VALUES('org','wiki_type_org','english_name','english_name','英文名称','基本资料','fields',1,'json','旧字段','evidence_required',3)").run();
+  db.prepare('UPDATE entities SET name_en=NULL WHERE id=?').run(organization.entity_id);
+  db.prepare('UPDATE wiki_type_org SET name_en=NULL,english_name=? WHERE entity_id=?').run(JSON.stringify(legacyName),organization.entity_id);
+  db.prepare("INSERT OR REPLACE INTO wiki_column_value_types(entity_id,column_name,json_type) VALUES(?,'english_name','object')").run(organization.entity_id);
+  db.prepare('UPDATE wiki_entry_profiles SET fields=? WHERE entity_id=?').run(JSON.stringify({...JSON.parse(organization.fields),english_name:legacyName}),organization.entity_id);
+  db.prepare('DELETE FROM wiki_entry_schema_migrations WHERE version>=?').run(contract.SCHEMA_REVISION);
   const before=db.prepare("SELECT p.entity_id,e.name,p.type_key FROM wiki_entry_profiles p JOIN entities e ON e.id=p.entity_id").all();
   const report=applySchemaMigration(db,contract,fingerprint);
   if(!report.alreadyApplied)assert.equal(report.totalAfter,before.length-report.removedIds.length);
@@ -42,5 +65,10 @@ test('migrate an isolated real-schema subset: values, deletion, triggers, free J
   assert.throws(function unknown(){db.prepare('UPDATE wiki_entry_profiles SET fields=? WHERE entity_id=?').run(JSON.stringify({...fields,comparison:'removed'}),device.entity_id);},/COLUMN_UNKNOWN_FIELD/);
   assert.deepEqual(applySchemaMigration(db,contract,fingerprint),{alreadyApplied:true});
   assert.equal(db.prepare('PRAGMA integrity_check').get().integrity_check,'ok');
+  const migratedOrg=db.prepare('SELECT name_en,aliases FROM wiki_type_org WHERE entity_id=?').get(organization.entity_id);
+  assert.equal(migratedOrg.name_en,null);
+  assert.ok(JSON.stringify(JSON.parse(migratedOrg.aliases)).includes(JSON.stringify(legacyName)));
+  assert.equal(db.prepare("SELECT count(*) n FROM wiki_column_fields WHERE type_key='person' AND storage<>'identity' AND collection_mode<>'paused'").get().n,0);
+  assert.equal(db.prepare("SELECT collection_mode FROM wiki_column_fields WHERE type_key='device' AND field_key='assessment'").get().collection_mode,'paused');
  }finally{db.close();}
 });

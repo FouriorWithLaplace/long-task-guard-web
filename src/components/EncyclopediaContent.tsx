@@ -39,6 +39,28 @@ const labels: Record<string, string> = {
   paragraphs: "内容",
   label: "项目",
   entity_id: "关联词条",
+  end_date: "结束时间",
+  published_date: "公布时间",
+  state: "发生情况",
+  status_after: "变更后状态",
+  sources: "来源",
+  related_papers: "关联论文",
+  code_repositories: "关联代码",
+  datasets: "关联数据集",
+  relation: "关系类型",
+  reason: "关联原因",
+  version: "对应版本",
+  author: "作者",
+  affiliations: "署名机构",
+  author_response: "作者回复",
+  translation: "译文",
+  original: "原文",
+  language: "语言",
+  model: "型号",
+  system: "所属系统",
+  suppliers: "供应商",
+  start_date: "开始使用",
+  timeline_id: "时间轴节点",
 };
 
 export function JsonContent({ value }: { value: Json }): ReactNode {
@@ -135,11 +157,16 @@ export default function EncyclopediaContent({
     return (
       <ol className="ep-content-timeline">
         {events.map(function event(item, index) {
+          const extra = Object.fromEntries(Object.entries(item).filter(function visible([key]) {
+            return !["id", "date", "title", "description", "details", "kind"].includes(key);
+          }));
+          if (typeof extra.state === "string") extra.state = ({ planned: "计划", occurred: "已发生", unknown: "未确认" } as Record<string, string>)[extra.state] || extra.state;
           return (
-            <li key={index}>
+            <li key={String(item.id || index)}>
               <time>{String(item.date || "日期未明确")}</time>
               <strong>{String(item.title || "时间记录")}</strong>
               <JsonContent value={item.description || null} />
+              {Object.keys(extra).length ? <JsonContent value={extra} /> : null}
               {item.details ? (
                 <details>
                   <summary>详细记录</summary>

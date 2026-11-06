@@ -221,7 +221,9 @@ test("actual local database schema can be exported with foreign keys and all sch
     await exportDatabase({...f.config,database},target,function states(){return new Map([[row.id,"completed"]]);},new AbortController().signal);
     const db=new DatabaseSync(target);
     try {
-      assert.deepEqual(schema(db),schema(source));
+      const businessSchema = schema(source).filter(function businessObject(row) { return !row.name.startsWith("panel_view_"); });
+      assert.deepEqual(schema(db),businessSchema);
+      assert.equal(schema(db).some(function internalObject(row) { return row.name.startsWith("panel_view_"); }), false);
       assert.deepEqual(db.prepare("PRAGMA foreign_key_check").all(),[]);
       assert.equal(db.prepare("SELECT COUNT(*) n FROM entities").get().n,1);
     } finally {db.close();}

@@ -14,3 +14,12 @@ test('schema changes preserve unchanged verified fields and invalidate transform
  assert.equal(task.results['fields.retired'].value,true);
  assert.equal(reconcileTaskSchema(task,detail),false);
 });
+
+test('changed collection rules invalidate confirmation even when the stored value is unchanged', function () {
+ const task = {dictionaryHash:'old',scope:['fields.authors','fields.title'],processedFields:['fields.authors','fields.title'],results:{'fields.authors':{value:'A',readback:true},'fields.title':{value:'T',readback:true}},phase:'completed',desired:'stopped'};
+ const detail = {dictionaryHash:'new',fields:[{key:'fields.authors',writable:true,value:'A'},{key:'fields.title',writable:true,value:'T'}]};
+ reconcileTaskSchema(task, detail, new Set(['fields.authors']));
+ assert.deepEqual(task.processedFields,['fields.title']);
+ assert.equal(task.phase,'stopped');
+ assert.equal(task.results['fields.authors'].value,'A');
+});

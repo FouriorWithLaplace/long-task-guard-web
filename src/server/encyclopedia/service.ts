@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { CodexClient } from "../codex-client.ts";
 import { findCodexExecutable } from "../model-catalog.ts";
-import { GuardTerminalService } from "../guard-terminal-service";
+import { GuardTerminalService } from "../guard-terminal-service.ts";
 import { paths } from "./config.ts";
 import { EncyclopediaManager } from "./manager.ts";
 
@@ -38,9 +38,16 @@ export function getEncyclopediaService() {
       manager,
       terminals: new GuardTerminalService(manager),
     };
-    process.once("exit", function closeEncyclopedia() {
+    function closeEncyclopedia() {
       shared.encyclopediaService?.terminals.dispose();
       manager.dispose();
+    }
+    process.once("exit", closeEncyclopedia);
+    process.on("message", function parentMessage(message: unknown) {
+      if (message && typeof message === "object" && "shutdown" in message && message.shutdown === true) {
+        closeEncyclopedia();
+        process.exit(0);
+      }
     });
   }
   return shared.encyclopediaService;

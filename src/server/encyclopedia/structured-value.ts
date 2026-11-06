@@ -1,4 +1,13 @@
 import type { Json } from "../../types/encyclopedia.ts";
+import { randomUUID } from "node:crypto";
+
+function validDate(value: Json | undefined): boolean {
+  if (value === null) return true;
+  if (typeof value !== "string" || !/^\d{4}(?:-\d{2})?(?:-\d{2})?$/.test(value)) return false;
+  const [year, month = 1, day = 1] = value.split("-").map(Number);
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+  return year >= 1000 && parsed.getUTCFullYear() === year && parsed.getUTCMonth() === month - 1 && parsed.getUTCDate() === day;
+}
 
 function record(value: Json): Record<string, Json> {
   if (!value || typeof value !== "object" || Array.isArray(value))
@@ -15,23 +24,28 @@ export function normalizeStructuredValue(
   if (type !== "device") return value;
   if (field === "fields.timeline") {
     if (!Array.isArray(value)) throw new Error("时间轴必须是 JSON 数组。");
-    for (const item of value) {
-      const row = record(item);
-      if (
-        row.date !== null &&
-        (typeof row.date !== "string" ||
-          !/^\d{4}(?:-(?:0[1-9]|1[0-2]))?(?:-(?:0[1-9]|[12]\d|3[01]))?$/.test(
-            row.date,
-          ))
-      )
+    const ids = new Set<string>();
+    const events = value.map(function normalizeEvent(item) {
+      const row = { ...record(item) };
+      if (!validDate(row.date))
         throw new Error(
           "时间轴日期使用 YYYY、YYYY-MM、YYYY-MM-DD；未知日期使用 null。",
         );
+      for (const key of ["end_date", "published_date"])
+        if (key in row && !validDate(row[key])) throw new Error(key + " 日期不合法。");
+      if (typeof row.end_date === "string" && typeof row.date === "string" && row.end_date.slice(0, row.date.length) < row.date.slice(0, row.end_date.length))
+        throw new Error("结束日期不能早于开始日期。");
+      if (row.state !== undefined && !["planned", "occurred", "unknown"].includes(String(row.state)))
+        throw new Error("state 必须为 planned、occurred 或 unknown。");
+      if (row.id === undefined || row.id === null || row.id === "") row.id = randomUUID();
+      if (typeof row.id !== "string" || ids.has(row.id)) throw new Error("时间轴 id 必须为不重复的文本。");
+      ids.add(row.id);
       for (const key of ["title", "kind", "description"])
         if (typeof row[key] !== "string")
           throw new Error("时间轴记录需包含 title、kind、description 文本。");
-    }
-    return [...value].sort(function chronological(left, right) {
+      return row;
+    });
+    return events.sort(function chronological(left, right) {
       const a = record(left).date,
         b = record(right).date;
       if (a === null) return b === null ? 0 : 1;
@@ -54,8 +68,8 @@ export function normalizeStructuredValue(
         );
     }
   }
-  if (field === "fields.component_suppliers" && !Array.isArray(value))
-    throw new Error("零件供应商必须是 JSON 数组，数量不限。");
+  if (field === "fields.components" && value !== null && !Array.isArray(value))
+    throw new Error("零部件必须是 JSON 数组，数量不限。");
   if (field === "fields.gallery") {
     const gallery = record(value);
     if (!("cover" in gallery) || !Array.isArray(gallery.images))

@@ -6,6 +6,7 @@ import type { CodexConnection, CodexEvents } from "../codex-client.ts";
 import type { TerminalTarget } from "../codex-terminal.ts";
 import type { EntryTask, StartMode } from "../../types/encyclopedia.ts";
 import { fieldProgress, taskProgress } from "../../types/encyclopedia.ts";
+import { compareQueueOrder, readyToStart } from "../../types/task-queue.ts";
 import { hash, object, readDetail, readSource } from "./database.ts";
 import { panelDirectory } from "./config.ts";
 import type { EncyclopediaPaths } from "./config.ts";
@@ -52,6 +53,9 @@ export class EncyclopediaManager {
   private heartbeat: ReturnType<typeof setInterval> | null = null;
   private disposed = false;
   private leader = false;
+  private pumpQueued = false;
+  private publishQueued = false;
+  private queueOrder = 0;
   readonly concurrency = 2;
 
   constructor(
@@ -64,6 +68,9 @@ export class EncyclopediaManager {
     this.createConnection = factory;
     this.skill = skill;
     this.store = new TaskStore(config);
+    for (const task of this.store.listSummaries()) {
+      this.queueOrder = Math.max(this.queueOrder, task.queueOrder || 0);
+    }
     this.writer = new EntryWriter(config, this.store);
     this.leader = this.store.claimService(this.owner);
     if (this.leader) this.recoverService();
@@ -79,7 +86,10 @@ export class EncyclopediaManager {
   private recoverService() {
     this.store.migrateTasks();
     let reservedSlots = 0;
-    for (const task of this.store.list()) {
+    for (const summary of this.store.listSummaries()) {
+      if (summary.phase === "queued" && !summary.slotHeld && !summary.sessionId && !summary.cleanupSessions.length && !summary.unconfirmed) continue;
+      if (summary.desired !== "running" && !summary.sessionId && !summary.cleanupSessions.length && !summary.unconfirmed) continue;
+      const task = this.store.get(summary.entityId)!;
       // 旧版本可能留下超过并发上限的重试项；恢复时最多保留两个名额。
       if (task.desired === "running" && task.slotHeld) {
         task.slotHeld = reservedSlots < this.concurrency;
@@ -128,11 +138,11 @@ export class EncyclopediaManager {
       if (task.desired !== "running") task.slotHeld = false;
       this.store.save(task, "service_recovered");
     }
-    queueMicrotask(this.pump.bind(this));
+    this.schedulePump();
     void this.cleanupStoppedSessions();
   }
   private async cleanupStoppedSessions() {
-    for (const task of this.store.list()) {
+    for (const task of this.store.listSummaries()) {
       if (this.disposed) return;
       if (task.desired === "stopped" && task.cleanupSessions.length)
         await this.cleanupDetached(task.entityId);
@@ -164,6 +174,15 @@ export class EncyclopediaManager {
     };
   }
   private publish() {
+    if (this.publishQueued || this.disposed) return;
+    this.publishQueued = true;
+    queueMicrotask(this.flushPublish.bind(this));
+  }
+  private flushPublish() {
+    this.publishQueued = false;
+    if (!this.disposed) this.notifyListeners();
+  }
+  private notifyListeners() {
     for (const listener of this.listeners) {
       try {
         listener();
@@ -276,8 +295,23 @@ export class EncyclopediaManager {
       task.filled = fieldProgress(detail.fields).filled;
       task.message = "继续当前任务，只处理尚未检查的字段。";
     }
+    task.queueOrder = ++this.queueOrder;
     this.save(task, mode === "restart" ? "all_fields_requested" : "resumed");
-    queueMicrotask(this.pump.bind(this));
+    this.schedulePump();
+    return task;
+  }
+
+  configure(id: number, model: string, reasoning: string) {
+    this.assertOwner();
+    const task = this.store.get(id);
+    if (!task) throw new Error("任务尚未开始，请选择模型后开始任务。");
+    if (task.phase === "stopping") throw new Error("任务正在停止，请稍后修改设置。");
+    task.model = model;
+    task.reasoning = reasoning;
+    const timing = task.desired === "running" ? "下一轮请求生效。" : "下次开始时生效。";
+    task.message = "模型已设为 " + model + " / " + reasoning + "；" + timing;
+    // 不改变 generation、运行意图和进度；send 每轮都重新读取持久化设置。
+    this.save(task, "model_configured");
     return task;
   }
 
@@ -328,11 +362,18 @@ export class EncyclopediaManager {
     return this.store.get(id);
   }
 
+  private schedulePump() {
+    if (this.pumpQueued || this.disposed) return;
+    this.pumpQueued = true;
+    queueMicrotask(this.flushPump.bind(this));
+  }
+  private flushPump() {
+    this.pumpQueued = false;
+    this.pump();
+  }
   private pump() {
     if (this.disposed || !this.leader) return;
-    const tasks = this.store.list().sort(function waitingOrder(a, b) {
-      return a.queuedAt.localeCompare(b.queuedAt) || a.entityId - b.entityId;
-    });
+    const tasks = this.store.listSummaries(true).sort(compareQueueOrder);
     // 失败只关闭连接，不交出名额；重试等待期间，排队任务也不能抢占。
     const occupied = new Set(this.executions.keys());
     for (const task of tasks) {
@@ -341,12 +382,11 @@ export class EncyclopediaManager {
     for (const task of tasks) {
       if (task.desired !== "running" || this.executions.has(task.entityId))
         continue;
-      if (!["queued", "retrying"].includes(task.phase)) continue;
+      if (!readyToStart(task)) continue;
       if (!occupied.has(task.entityId) && occupied.size >= this.concurrency) continue;
-      if (task.nextRetryAt && Date.parse(task.nextRetryAt) > Date.now())
-        continue;
       occupied.add(task.entityId);
-      this.launch(task);
+      const fullTask = this.store.get(task.entityId);
+      if (fullTask) this.launch(fullTask);
     }
   }
   private launch(task: EntryTask) {

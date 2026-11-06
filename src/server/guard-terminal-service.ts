@@ -1,5 +1,5 @@
-import { CodexTerminal, terminalSize } from "./codex-terminal";
-import { GuardError } from "./guard-manager";
+import { CodexTerminal, terminalSize } from "./codex-terminal.ts";
+import { GuardError } from "./guard-manager.ts";
 import type { TerminalTarget } from "./codex-terminal";
 
 type CreateTerminal = (target: TerminalTarget, cols: number, rows: number) => CodexTerminal;

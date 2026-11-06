@@ -41,7 +41,9 @@ export async function exportDatabase(
     db.prepare("ATTACH DATABASE ? AS source").run(sourceUrl.href);
     db.exec("BEGIN");
     // 在第一次让出执行权前，同时确定任务名单和业务库的读取快照。
-    const schema = db.prepare("SELECT type,name,sql FROM source.sqlite_master WHERE sql IS NOT NULL ORDER BY rowid").all() as SchemaRow[];
+    const schema = db.prepare("SELECT type,name,sql FROM source.sqlite_master WHERE sql IS NOT NULL ORDER BY rowid").all().filter(function businessSchema(row) {
+      return !String(row.name).startsWith("panel_view_");
+    }) as SchemaRow[];
     if (!schema.some(function marker(row) { return row.name === "encyclopedia_workspace"; }) ||
         schema.some(function marker(row) { return row.name === "encyclopedia_release"; }))
       throw new Error("仅允许导出百科维护库。");
@@ -122,7 +124,7 @@ export async function exportDatabase(
 
     // 恢复自增序列、索引、视图和触发器；复制数据期间不运行业务触发器。
     if (schema.some(function sequence(row) { return row.name === "sqlite_sequence"; })) {
-      db.exec("DELETE FROM main.sqlite_sequence; INSERT INTO main.sqlite_sequence SELECT * FROM source.sqlite_sequence");
+      db.exec("DELETE FROM main.sqlite_sequence; INSERT INTO main.sqlite_sequence SELECT * FROM source.sqlite_sequence WHERE name NOT GLOB 'panel_view_*'");
     }
     for (const row of schema) {
       if (row.type === "index" || row.type === "view" || row.type === "trigger") db.exec(row.sql);
