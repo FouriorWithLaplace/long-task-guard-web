@@ -161,12 +161,17 @@ test("ZIP contains a working subset database, deduplicated original files and ex
     assert.equal(manifest.entryCount,2);
     assert.deepEqual(entries.get("data/"+f.documentPath),f.compressed);
     assert.deepEqual(entries.get("data/encyclopedia-workspace/assets/"+f.mediaPath),f.image);
+    const guide=entries.get("迁移指南.md").toString("utf8");
+    assert.match(guide,/同结构/);
+    assert.match(guide,/data\/encyclopedia-workspace\/encyclopedia\.db/);
+    assert.match(guide,/备份/);
+    assert.match(guide,/词条数量：2/);
     const database=path.join(f.root,"unzipped.db");
     fs.writeFileSync(database,entries.get(manifest.database));
     const db=new DatabaseSync(database);
     try { assert.equal(db.prepare("PRAGMA integrity_check").get().integrity_check,"ok"); }
     finally {db.close();}
-    assert.equal(entries.size,5);
+    assert.equal(entries.size,6);
   } finally {await archive.cleanup();}
   assert.equal(fs.existsSync(archive.file),false);
 });

@@ -11,7 +11,7 @@
 - `data/encyclopedia-workspace/encyclopedia.db`：保留主库全部表结构、索引、视图、触发器、字典、原始 ID 和字段值，以及所选词条的证据、修订等关联数据。
 - `data/encyclopedia-sources/...`：关联本地原件，保持 `blob_path` 相对路径；其他原件相对路径同样位于 `data/` 下。
 - `data/encyclopedia-workspace/assets/...`：关联外置图片，保持 `relative_path`；旧版内嵌图片继续保存在数据库 BLOB 中。
-- `manifest.json` 和 `README.txt`：词条 ID、数量、文件清单及使用说明。请完整解压并保持目录结构。
+- `manifest.json`、`README.txt` 和 `迁移指南.md`：词条 ID、数量、文件清单及使用说明。`迁移指南.md` 面向 AI，说明同结构工程的停服、备份、替换、校验和页面摘要重建步骤。请完整解压并保持目录结构。
 
 跨词条关系仅保留两端均在导出库中的记录；未绑定采集输入、候选导入批次和整库运行报告保留空表。审核状态、可见性和维护库标记不变。网络链接保留原样，不额外抓取网站。
 
