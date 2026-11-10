@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {normalizeStructuredValue as normalize} from '../src/server/encyclopedia/structured-value.ts';
+import {normalizeStructuredValue} from '../src/server/encyclopedia/structured-value.ts';
 
 test('device submissions preserve chronology, reject malformed systems and keep science JSON free',function(){
  const events=[null,'2024-02','1998'].map(function(date){return {date,title:'record',kind:'result',description:'source'};});
@@ -23,4 +24,14 @@ test('timeline retains links, assigns stable IDs and rejects impossible dates or
    assert.throws(function () { normalize('device','fields.timeline',[{...input[0],date}]); }, /日期/);
  assert.throws(function () { normalize('device','fields.timeline',[{...input[0],end_date:'2023'}]); }, /结束日期/);
  assert.throws(function () { normalize('device','fields.timeline',[value[0],value[0]]); }, /不重复/);
+});
+test('organization categories and tagged timelines reject ambiguous types and retain sources',function(){
+ assert.equal(normalizeStructuredValue('org','fields.organization_category','investment'),'investment');
+ assert.throws(()=>normalizeStructuredValue('org','fields.organization_category','unknown'));
+ const event={date:'2026-01',title:'投资',kind:'investment',description:'公开投资事件',source_url:'https://example.test/investment'};
+ const timeline=normalizeStructuredValue('org','fields.investment_timeline',[event]);
+ assert.ok(timeline[0].id);assert.equal(timeline[0].kind,'investment');
+ assert.throws(()=>normalizeStructuredValue('org','fields.timeline',[{...event,date:'2026-02-30'}]));
+ assert.throws(()=>normalizeStructuredValue('org','fields.timeline',[{...event,kind:'unspecified'}]));
+ assert.throws(()=>normalizeStructuredValue('org','fields.timeline',[{...event,source_url:null}]));
 });

@@ -1,8 +1,8 @@
 # 全部分类词条数据库字段
 
-导出时间：2026/11/9 17:34:34（北京时间）
+导出时间：2026/11/10 18:01:17（北京时间）
 
-共 15 个词条表，414 个数据库字段。
+共 15 个词条表，489 个数据库字段。
 
 > 数据库字段名取自本次导出时的实际表结构；中文名称和说明取自当前字段字典。包含身份字段和未登记字典的列，不包含词条内容。
 
@@ -133,8 +133,12 @@
 | copyright_term | 版权期限 | TEXT | fields.copyright_term | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
 | usage_restrictions | 使用限制 | TEXT | fields.usage_restrictions | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
 | user_reviews | 外部用户评论 | TEXT | fields.user_reviews | evidence_required | 外部用户评论：仅保存实际网站上的用户原评，不生成或冒充用户评价。每项保留平台、公开用户名、原评、日期（未知为null）、原始URL、平台评论ID或去重标识、对应作品版本及获取时间。只能验证评论发表于该网站，不保证身份或内容真实。评分保留原量表，各平台分开展示，不直接平均。翻译另存并标明翻译，不覆盖原评。迁移旧记录来源未明确时保留原值并待复核。 |
-| abstract | 原始简介／摘要 | TEXT | sections.abstract | evidence_required | 本出版版本的原始简介，注明来自出版社或作者及原始来源；译文另存，不用站内整理冒充原文。 |
 | translations | 简介与摘录译文 | TEXT | fields.translations | evidence_required | 原文、中文翻译和站内整理分别标明；翻译注明语言、对应原文位置、版本、来源及翻译方式，不覆盖原文，不冒充作者内容。 |
+| abstract | 原始简介／摘要 | TEXT | sections.abstract | evidence_required | 本出版版本的原始简介，注明来自出版社或作者及原始来源；译文另存，不用站内整理冒充原文。 |
+| quality_score | 质量分数 | REAL | fields.quality_score | system | 0～100；程序计算：40%完备性＋40%证据覆盖可信度＋20%格式有效率。任一分项无法评估时留空；不代表学术价值。 |
+| completeness_score | 完备性评分 | REAL | fields.completeness_score | system | 0～100；有效非空内容字段数／适用内容字段数×100。排除身份、程序计算、暂停采集字段；有核查记录的not_applicable排除分母。 |
+| credibility_score | 可信度评分 | REAL | fields.credibility_score | system | 0～100；已填字段中具有可追溯原始来源和摘录的字段占比。仅衡量证据覆盖，不保证事实真实；排除history审计来源，无内容留空。 |
+| fusion_relevance_score | 聚变相关度评分 | REAL | fields.fusion_relevance_score | system | 0～100；内容中的明确聚变主题命中为100，聚变支撑技术为60，一般等离子体为30，未命中为0，无内容留空。按版本化词表匹配，不以文件名、URL、证据日志或本评分字段作为输入。 |
 
 ## 论文
 
@@ -179,11 +183,13 @@
 | corrections | 更正与撤稿信息 | TEXT | fields.corrections | evidence_required | 更正、撤稿和关注声明保留日期、来源与对应论文版本，不以新版本覆盖历史声明。 |
 | related_papers | 相关论文 | TEXT | fields.related_papers | evidence_required | 关联应说明关系类型和原因，区分介绍、设计、使用、产出与引用；优先引用实际库内entity_id，否则保留外部名称与URL或DOI，不创建虚假ID。涉及版本、实验或时间轴节点时注明对应版本和节点ID。区分预印本、正式版、后续研究、更正和引用；不混同独立研究。 |
 | related_books | 相关著作 | TEXT | fields.related_books | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
-| citation_count | 被引次数 | TEXT | fields.citation_count | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
+| citation_count | 历史引用资料（口径待核） | TEXT | fields.citation_count | paused | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
 | metrics_source | 引用统计来源 | TEXT | fields.metrics_source | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
 | metrics_date | 引用统计日期 | TEXT | fields.metrics_date | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
 | peer_reviews | 审稿意见 | TEXT | fields.peer_reviews | evidence_required | 公开同行评审原文：记录论文版本、评审轮次、审稿人公开身份、原始意见、作者回复、日期、来源URL；意见与回复分开，不猜测匿名身份，不得用用户评论或AI评价代替。 |
 | user_reviews | 外部用户评论 | TEXT | fields.user_reviews | evidence_required | 外部用户评论：仅保存实际网站上的用户原评，不生成或冒充用户评价。每项保留平台、公开用户名、原评、日期（未知为null）、原始URL、平台评论ID或去重标识、对应作品版本及获取时间。只能验证评论发表于该网站，不保证身份或内容真实。评分保留原量表，各平台分开展示，不直接平均。翻译另存并标明翻译，不覆盖原评。迁移旧记录来源未明确时保留原值并待复核。 |
+| versions | 论文版本 | TEXT | fields.versions | evidence_required | 同一论文的修订版本记录在一个词条内，保留版本标识、日期、版本类型、DOI或arXiv标识及来源；明确预印本与正式版的对应关系。已经分别建词条的版本使用真实entity_id关联，不自动合并或删除旧词条。摘要、结论、审稿意见和更正须注明对应版本，不能混用。 |
+| translations | 译文 | TEXT | fields.translations | evidence_required | 原文、中文翻译和站内整理分别标明；翻译注明语言、对应原文位置、版本、来源及翻译方式，不覆盖原文，不冒充作者内容。 |
 | abstract | 原文摘要 | TEXT | sections.abstract | evidence_required | 含义：该论文当前版本完整原始摘要。<br>不包含：不使用PROGRAM SUMMARY、引言、结论、搜索摘要或AI生成摘要替代。<br>格式：与登记原始资料逐字一致的完整原文；保留段落与公式，不翻译、不删改、不拼接，不用章节生成摘要。<br>单位与条件：原文单位、符号及数值逐字保留。<br>适用性：仅当资料明确涉及本词条对应事实时采集；无对应事实不得推断。<br>来源：仅既有授权的本作品或本刊原始记录、原件及已登记来源；网络只能在另行授权的来源范围内定位核对，不因本契约扩大网页采用权限。<br>缺失：未找到、明确不适用、来源冲突分别输出 not_found、not_applicable、conflict，并附原因；value 为 null。不得写未知、暂无资料、N/A等占位内容，不得用0、false或空数组代表未知，不删除已有值。<br>冲突：比较同一主体、版本、时间和口径的原始证据；保留各候选值及证据，不投票、不平均、不按搜索排名选择，不自动覆盖旧值。不同时间或工况属于多个有条件事实，不冒充冲突。<br>证据：每个 found 值附支持该值的原文摘录、具体来源URL、source_kind、原文位置locator、资料日期source_date（不详则null）、实际访问日期accessed_at；不得编造网址、页码、日期或摘录。文本整理须逐项可追溯；URL字段的证据来自介绍该链接的页面。 必须注明对应论文版本；中文翻译单独保存在translations，不覆盖原文。 |
 | program_summary | 原始程序说明（PROGRAM SUMMARY） | TEXT | sections.program_summary | evidence_required | 含义：论文原件中明确标注PROGRAM SUMMARY的完整程序说明。<br>不包含：不充当原始摘要，不根据软件功能另写一段。<br>格式：与登记原始资料逐字一致的完整原文；保留段落与公式，不翻译、不删改、不拼接，不用章节生成摘要。<br>单位与条件：原文单位、符号及数值逐字保留。<br>适用性：仅有明确PROGRAM SUMMARY栏目时适用；一般论文为not_applicable。<br>来源：仅既有授权的本作品或本刊原始记录、原件及已登记来源；网络只能在另行授权的来源范围内定位核对，不因本契约扩大网页采用权限。<br>缺失：未找到、明确不适用、来源冲突分别输出 not_found、not_applicable、conflict，并附原因；value 为 null。不得写未知、暂无资料、N/A等占位内容，不得用0、false或空数组代表未知，不删除已有值。<br>冲突：比较同一主体、版本、时间和口径的原始证据；保留各候选值及证据，不投票、不平均、不按搜索排名选择，不自动覆盖旧值。不同时间或工况属于多个有条件事实，不冒充冲突。<br>证据：每个 found 值附支持该值的原文摘录、具体来源URL、source_kind、原文位置locator、资料日期source_date（不详则null）、实际访问日期accessed_at；不得编造网址、页码、日期或摘录。文本整理须逐项可追溯；URL字段的证据来自介绍该链接的页面。 |
 | background | 研究背景 | TEXT | sections.background | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
@@ -195,8 +201,12 @@
 | reproducibility | 数据、代码与可复现性 | TEXT | sections.reproducibility | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
 | summary | 内容概述 | TEXT | sections.summary | evidence_required | 基于对应版本论文正文整理简短概述，标明站内整理、版本和依据，不冒充作者摘要或结论。 |
 | conclusion | 原文结论 | TEXT | sections.conclusion | evidence_required | 仅采集对应版本论文最后的Conclusion、Conclusions、Summary and Conclusions或结论章节原文，保留章节定位与来源；不得用原始摘要、翻译、AI总结或结果字段替代。确认没有结论章节记not_applicable，无法取得原文记not_found，不编造。 |
-| versions | 论文版本 | TEXT | fields.versions | evidence_required | 同一论文的修订版本记录在一个词条内，保留版本标识、日期、版本类型、DOI或arXiv标识及来源；明确预印本与正式版的对应关系。已经分别建词条的版本使用真实entity_id关联，不自动合并或删除旧词条。摘要、结论、审稿意见和更正须注明对应版本，不能混用。 |
-| translations | 译文 | TEXT | fields.translations | evidence_required | 原文、中文翻译和站内整理分别标明；翻译注明语言、对应原文位置、版本、来源及翻译方式，不覆盖原文，不冒充作者内容。 |
+| internal_citation_count | 库内被引次数 | INTEGER | fields.internal_citation_count | system | 本数据库内去重后的引用该论文的其他论文数，不是外部引用量，也不按年累计。首批录入完成后再计算；未计算为null，不以0代替。 |
+| is_highly_cited | 是否库内高被引 | TEXT | fields.is_highly_cited | system | 由库内被引次数判定；首批录入后另行确定阈值并计算。true显示高被引标签，false未达阈值，null尚未计算；不得抓取外部ESI标签填入。 |
+| quality_score | 质量分数 | REAL | fields.quality_score | system | 0～100；程序计算：40%完备性＋40%证据覆盖可信度＋20%格式有效率。任一分项无法评估时留空；不代表学术价值。 |
+| completeness_score | 完备性评分 | REAL | fields.completeness_score | system | 0～100；有效非空内容字段数／适用内容字段数×100。排除身份、程序计算、暂停采集字段；有核查记录的not_applicable排除分母。 |
+| credibility_score | 可信度评分 | REAL | fields.credibility_score | system | 0～100；已填字段中具有可追溯原始来源和摘录的字段占比。仅衡量证据覆盖，不保证事实真实；排除history审计来源，无内容留空。 |
+| fusion_relevance_score | 聚变相关度评分 | REAL | fields.fusion_relevance_score | system | 0～100；内容中的明确聚变主题命中为100，聚变支撑技术为60，一般等离子体为30，未命中为0，无内容留空。按版本化词表匹配，不以文件名、URL、证据日志或本评分字段作为输入。 |
 
 ## 期刊
 
@@ -220,7 +230,7 @@
 | owner_society | 主办学会与机构 | TEXT | fields.owner_society | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
 | editor_in_chief | 主编 | TEXT | fields.editor_in_chief | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
 | editorial_board | 编委会 | TEXT | fields.editorial_board | evidence_required | 合并同义字段，保留原始内容、来源和条件；不得重复填充已合并的旧字段。 |
-| editorial_office | 编辑部 | TEXT | fields.editorial_office | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
+| editorial_office | 编辑部 | TEXT | fields.editorial_office | evidence_required | 编辑部名称、公开通讯地址和联系渠道及来源；复用编辑部字段，不重复新建地址字段。 |
 | publication_frequency | 出版周期 | TEXT | fields.publication_frequency | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
 | article_types | 文章类型 | TEXT | fields.article_types | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
 | special_issues | 专题与专刊 | TEXT | fields.special_issues | evidence_required | 合并同义字段，保留原始内容、来源和条件；不得重复填充已合并的旧字段。 |
@@ -235,19 +245,27 @@
 | subject_categories | 学科分类 | TEXT | fields.subject_categories | evidence_required | 合并同义字段，保留原始内容、来源和条件；不得重复填充已合并的旧字段。 |
 | archiving_services | 长期保存服务 | TEXT | fields.archiving_services | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
 | related_journals | 相关期刊 | TEXT | fields.related_journals | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
-| identifiers | ISSN 与期刊标识 | TEXT | fields.identifiers | evidence_required | 区分印刷ISSN、电子ISSN及ISSN-L，标识必须对应本刊。 |
-| metrics | 学术指标 | TEXT | fields.metrics | evidence_required | 按指标分别保存名称、值、统计年份、来源URL、学科与分区口径。包括JIF、五年JIF、CiteScore、SJR等有来源的指标；不同年份不混用。 |
+| identifiers | ISSN 与期刊标识 | TEXT | fields.identifiers | evidence_required | 复用标识字段，区分印刷ISSN、电子ISSN、ISSN-L和国内CN刊号；标识必须对应本刊，不另外添加重复ISSN字段。 |
+| metrics | 学术指标与年度统计 | TEXT | fields.metrics | evidence_required | 每项记录metric、value、year、source_url、provider、统计口径及适用学科。包含JIF、五年JIF、JCI、CiteScore、SJR、SNIP、h-index、自引率、年发文量、累计出版文献量、研究文章占比、Gold OA占比、JCR分区与排名、中科院分区及Top/综述期刊标识、知网复合与综合影响因子。分区注明版本及大小类，多学科分别保存；不同年份和指标不得混用，新锐分区与中科院分区分别标识。外部指标与库内引用量分开。 |
 | author_charges | 作者费用与减免 | TEXT | fields.author_charges | evidence_required | 分别记录投稿、处理、版面、彩页等费用及APC，附币种、生效时间、适用条件、减免政策和来源。无收费需官方明确声明。 |
 | overview | 期刊简介 | TEXT | fields.overview | evidence_required | 合并同义字段，保留原始内容、来源和条件；不得重复填充已合并的旧字段。 |
 | repository_policy | 自存档与版本政策 | TEXT | fields.repository_policy | evidence_required | 区分预印本、接收稿、出版版的自存档许可、仓储与禁运期限。 |
 | plagiarism_policy | 查重与学术诚信 | TEXT | fields.plagiarism_policy | evidence_required | 官方查重、伦理、纠错与撤稿政策及原始链接。 |
-| publication_times | 评审与出版时长 | TEXT | fields.publication_times | evidence_required | 区分首次决定、送审决定、录用及上线时长；注明中位数或平均数、单位、统计时期和来源，不推算未提供的时间。 |
+| publication_times | 评审与出版时长 | TEXT | fields.publication_times | evidence_required | 区分首次决定、外审、录用及上线时长；记录单位、统计时期、平均数或中位数、来源URL、official或user_reported性质及样本数。未知不推算，网友分享与官方统计分开。 |
 | copyright_policy | 作者版权政策 | TEXT | fields.copyright_policy | evidence_required | 作者是否保留版权、使用许可与相关政策链接。 |
 | persistent_identifiers | 文章永久标识 | TEXT | fields.persistent_identifiers | evidence_required | 本刊实际使用的DOI、Handle、ARK等。 |
 | ai_policy | AI 使用政策 | TEXT | fields.ai_policy | evidence_required | 作者、审稿人、编辑使用AI工具的官方政策和日期。 |
 | scope | 收录范围 | TEXT | sections.scope | evidence_required | 含义：本刊原始宗旨与范围明确列出的研究主题、稿件领域和边界。<br>不包含：不以期刊名推导范围，不复制overview凑字段。<br>格式：有证据的连贯中文正文，可用Markdown和LaTeX；保留事实条件；不写采集过程、占位内容或未经支持的评价。<br>单位与条件：涉及数值时保留单位、误差、工况和来源时点。<br>适用性：仅当资料明确涉及本词条对应事实时采集；无对应事实不得推断。<br>来源：仅既有授权的本作品或本刊原始记录、原件及已登记来源；网络只能在另行授权的来源范围内定位核对，不因本契约扩大网页采用权限。<br>缺失：未找到、明确不适用、来源冲突分别输出 not_found、not_applicable、conflict，并附原因；value 为 null。不得写未知、暂无资料、N/A等占位内容，不得用0、false或空数组代表未知，不删除已有值。<br>冲突：比较同一主体、版本、时间和口径的原始证据；保留各候选值及证据，不投票、不平均、不按搜索排名选择，不自动覆盖旧值。不同时间或工况属于多个有条件事实，不冒充冲突。<br>证据：每个 found 值附支持该值的原文摘录、具体来源URL、source_kind、原文位置locator、资料日期source_date（不详则null）、实际访问日期accessed_at；不得编造网址、页码、日期或摘录。文本整理须逐项可追溯；URL字段的证据来自介绍该链接的页面。 |
 | history | 创刊与发展 | TEXT | sections.history | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
 | fusion_relevance | 聚变研究中的定位 | TEXT | sections.fusion_relevance | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
+| top_cited_papers | 库内被引前十论文 | TEXT | fields.top_cited_papers | system | 本刊库内论文按internal_citation_count降序、entity_id升序选前十，保存entity_id、次数、排名、计算时间与规则版本。首批录入后再计算；当前为null。 |
+| submission_experiences | 投稿经验 | TEXT | fields.submission_experiences | evidence_required | 网站真实用户投稿经历：platform、公开用户名、日期、原文、来源URL、审稿轮次、投稿结果；不生成经验，不冒充官方统计，保留原始量表及样本条件。 |
+| acceptance_statistics | 录用率统计 | TEXT | fields.acceptance_statistics | evidence_required | 录用比例、统计时期、样本数量、来源URL、来源性质（official或user_reported）；平台网友估计必须标明，未知样本不得编造。 |
+| warning_history | 期刊预警记录 | TEXT | fields.warning_history | evidence_required | 按发布机构、版本年份、发布日期、状态、原因、来源URL记录；未找到不等于不在预警名单。不同机构的名单分开。 |
+| quality_score | 质量分数 | REAL | fields.quality_score | system | 0～100；程序计算：40%完备性＋40%证据覆盖可信度＋20%格式有效率。任一分项无法评估时留空；不代表学术价值。 |
+| completeness_score | 完备性评分 | REAL | fields.completeness_score | system | 0～100；有效非空内容字段数／适用内容字段数×100。排除身份、程序计算、暂停采集字段；有核查记录的not_applicable排除分母。 |
+| credibility_score | 可信度评分 | REAL | fields.credibility_score | system | 0～100；已填字段中具有可追溯原始来源和摘录的字段占比。仅衡量证据覆盖，不保证事实真实；排除history审计来源，无内容留空。 |
+| fusion_relevance_score | 聚变相关度评分 | REAL | fields.fusion_relevance_score | system | 0～100；内容中的明确聚变主题命中为100，聚变支撑技术为60，一般等离子体为30，未命中为0，无内容留空。按版本化词表匹配，不以文件名、URL、证据日志或本评分字段作为输入。 |
 
 ## 装置
 
@@ -285,6 +303,10 @@
 | references | 参考来源 | TEXT | fields.references | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
 | related_devices | 关联装置 | TEXT | fields.related_devices | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
 | external_links | 其他外部资源 | TEXT | fields.external_links | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
+| quality_score | 质量分数 | REAL | fields.quality_score | system | 0～100；程序计算：40%完备性＋40%证据覆盖可信度＋20%格式有效率。任一分项无法评估时留空；不代表学术价值。 |
+| completeness_score | 完备性评分 | REAL | fields.completeness_score | system | 0～100；有效非空内容字段数／适用内容字段数×100。排除身份、程序计算、暂停采集字段；有核查记录的not_applicable排除分母。 |
+| credibility_score | 可信度评分 | REAL | fields.credibility_score | system | 0～100；已填字段中具有可追溯原始来源和摘录的字段占比。仅衡量证据覆盖，不保证事实真实；排除history审计来源，无内容留空。 |
+| fusion_relevance_score | 聚变相关度评分 | REAL | fields.fusion_relevance_score | system | 0～100；内容中的明确聚变主题命中为100，聚变支撑技术为60，一般等离子体为30，未命中为0，无内容留空。按版本化词表匹配，不以文件名、URL、证据日志或本评分字段作为输入。 |
 
 ## 机构
 
@@ -297,7 +319,7 @@
 | entity_id | 稳定实体ID | INTEGER | identity.entity_id | system | 保留现有身份信息，不改变词条ID与主体。 |
 | name | 规范名称 | TEXT | identity.name | system | 保留现有身份信息，不改变词条ID与主体。 |
 | name_en | 英文原名 | TEXT | identity.name_en | system | 保留现有身份信息，不改变词条ID与主体。 |
-| organization_type | 机构类型 | TEXT | fields.organization_type | evidence_required | 含义：资料支持的组织性质，如大学、研究机构、企业、学协会或政府部门。<br>不包含：研究方向不是组织性质，不推断企业法律形式。<br>格式：单个非空文本，保持事实限定；多项用分号分隔，同项去重但不丢失时间与角色。<br>单位与条件：按原文保留单位、版本、时间和工况，不从上下文猜数值。<br>适用性：仅当资料明确涉及本词条对应事实时采集；无对应事实不得推断。<br>来源：优先主体官方资料、原始论文或原始技术文档；权威二手资料须可追溯且不冒充独立原始证据；搜索摘要、AI回答及无来源聚合页不可采用。<br>缺失：未找到、明确不适用、来源冲突分别输出 not_found、not_applicable、conflict，并附原因；value 为 null。不得写未知、暂无资料、N/A等占位内容，不得用0、false或空数组代表未知，不删除已有值。<br>冲突：比较同一主体、版本、时间和口径的原始证据；保留各候选值及证据，不投票、不平均、不按搜索排名选择，不自动覆盖旧值。不同时间或工况属于多个有条件事实，不冒充冲突。<br>证据：每个 found 值附支持该值的原文摘录、具体来源URL、source_kind、原文位置locator、资料日期source_date（不详则null）、实际访问日期accessed_at；不得编造网址、页码、日期或摘录。文本整理须逐项可追溯；URL字段的证据来自介绍该链接的页面。 |
+| organization_type | 机构细分类型 | TEXT | fields.organization_type | evidence_required | 企业、高校、研究院；投资机构可填风投、私募股权、产业资本、基金会等；公共机构可填政府部门、协会、学会、国际组织。与机构大类分别保存。 |
 | location | 所在地 | TEXT | fields.location | evidence_required | 含义：机构总部或明确指认分支的国家、行政区及城市，标明对应主体。<br>不包含：不把实验装置地址或作者通讯地址直接当总部。<br>格式：单个非空文本，保持事实限定；多项用分号分隔，同项去重但不丢失时间与角色。<br>单位与条件：按原文保留单位、版本、时间和工况，不从上下文猜数值。<br>适用性：仅当资料明确涉及本词条对应事实时采集；无对应事实不得推断。<br>来源：优先主体官方资料、原始论文或原始技术文档；权威二手资料须可追溯且不冒充独立原始证据；搜索摘要、AI回答及无来源聚合页不可采用。<br>缺失：未找到、明确不适用、来源冲突分别输出 not_found、not_applicable、conflict，并附原因；value 为 null。不得写未知、暂无资料、N/A等占位内容，不得用0、false或空数组代表未知，不删除已有值。<br>冲突：比较同一主体、版本、时间和口径的原始证据；保留各候选值及证据，不投票、不平均、不按搜索排名选择，不自动覆盖旧值。不同时间或工况属于多个有条件事实，不冒充冲突。<br>证据：每个 found 值附支持该值的原文摘录、具体来源URL、source_kind、原文位置locator、资料日期source_date（不详则null）、实际访问日期accessed_at；不得编造网址、页码、日期或摘录。文本整理须逐项可追溯；URL字段的证据来自介绍该链接的页面。 |
 | founded | 成立时间 | TEXT | fields.founded | evidence_required | 含义：该机构正式成立日期，按有据精度记录。<br>不包含：前身成立、注册、揭牌及改名日期不互相替代；差异留证。<br>格式：资料支持的YYYY、YYYY-MM或YYYY-MM-DD；不能用访问日期代替事件日期。<br>单位与条件：公历日期；保留实际精度。<br>适用性：仅当资料明确涉及本词条对应事实时采集；无对应事实不得推断。<br>来源：优先主体官方资料、原始论文或原始技术文档；权威二手资料须可追溯且不冒充独立原始证据；搜索摘要、AI回答及无来源聚合页不可采用。<br>缺失：未找到、明确不适用、来源冲突分别输出 not_found、not_applicable、conflict，并附原因；value 为 null。不得写未知、暂无资料、N/A等占位内容，不得用0、false或空数组代表未知，不删除已有值。<br>冲突：比较同一主体、版本、时间和口径的原始证据；保留各候选值及证据，不投票、不平均、不按搜索排名选择，不自动覆盖旧值。不同时间或工况属于多个有条件事实，不冒充冲突。<br>证据：每个 found 值附支持该值的原文摘录、具体来源URL、source_kind、原文位置locator、资料日期source_date（不详则null）、实际访问日期accessed_at；不得编造网址、页码、日期或摘录。文本整理须逐项可追溯；URL字段的证据来自介绍该链接的页面。 |
 | website | 官方网站 | TEXT | fields.website | evidence_required | 含义：该机构的官方主页或具体机构介绍页。<br>不包含：不采用同名企业、社交账号或上级机构无关页面。<br>格式：同一主体的具体官方介绍或项目落地页，绝对http(s) URL；不填搜索结果页、API或无关首页。<br>单位与条件：不适用。<br>适用性：仅当资料明确涉及本词条对应事实时采集；无对应事实不得推断。<br>来源：优先主体官方资料、原始论文或原始技术文档；权威二手资料须可追溯且不冒充独立原始证据；搜索摘要、AI回答及无来源聚合页不可采用。<br>缺失：未找到、明确不适用、来源冲突分别输出 not_found、not_applicable、conflict，并附原因；value 为 null。不得写未知、暂无资料、N/A等占位内容，不得用0、false或空数组代表未知，不删除已有值。<br>冲突：比较同一主体、版本、时间和口径的原始证据；保留各候选值及证据，不投票、不平均、不按搜索排名选择，不自动覆盖旧值。不同时间或工况属于多个有条件事实，不冒充冲突。<br>证据：每个 found 值附支持该值的原文摘录、具体来源URL、source_kind、原文位置locator、资料日期source_date（不详则null）、实际访问日期accessed_at；不得编造网址、页码、日期或摘录。文本整理须逐项可追溯；URL字段的证据来自介绍该链接的页面。 |
@@ -313,7 +335,7 @@
 | research_facilities | 研究设施 | TEXT | fields.research_facilities | evidence_required | 合并同义字段，保留原始内容、来源和条件；不得重复填充已合并的旧字段。 |
 | funding_sources | 经费来源 | TEXT | fields.funding_sources | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
 | public_budget | 公开经费与财年 | TEXT | fields.public_budget | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
-| research_fields | 研究领域 | TEXT | fields.research_fields | evidence_required | 合并同义字段，保留原始内容、来源和条件；不得重复填充已合并的旧字段。 |
+| research_fields | 研究与关注领域 | TEXT | fields.research_fields | evidence_required | 研究与关注领域：企业与科研机构填技术和研究领域，投资机构填投资关注领域，公共机构填职能覆盖领域；复用同一字段。 |
 | fusion_programs | 聚变研究计划 | TEXT | fields.fusion_programs | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
 | operated_devices | 运行装置 | TEXT | fields.operated_devices | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
 | major_projects | 代表项目 | TEXT | fields.major_projects | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
@@ -325,15 +347,28 @@
 | consortia | 联盟与协作网络 | TEXT | fields.consortia | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
 | education_programs | 教育与人才培养 | TEXT | fields.education_programs | evidence_required | 合并同义字段，保留原始内容、来源和条件；不得重复填充已合并的旧字段。 |
 | industry_partnerships | 产业合作 | TEXT | fields.industry_partnerships | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
-| public_reports | 公开年度报告 | TEXT | fields.public_reports | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
+| public_reports | 机构发布的报告 | TEXT | fields.public_reports | evidence_required | 复用原公开年度报告字段，扩展至本机构发布的年报、行业报告、研究报告；每项含标题、日期、发布机构、报告类型、原始URL及可用的库内entity_id。关于本机构但由他人发布的报告不放此字段。 |
 | newsroom | 官方新闻入口 | TEXT | fields.newsroom | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
 | overview | 机构简介 | TEXT | sections.overview | evidence_required | 含义：机构性质、职责、研究定位与主要活动的有据介绍。<br>不包含：不复制行业介绍或无依据规模排名。<br>格式：有证据的连贯中文正文，可用Markdown和LaTeX；保留事实条件；不写采集过程、占位内容或未经支持的评价。<br>单位与条件：涉及数值时保留单位、误差、工况和来源时点。<br>适用性：仅当资料明确涉及本词条对应事实时采集；无对应事实不得推断。<br>来源：优先主体官方资料、原始论文或原始技术文档；权威二手资料须可追溯且不冒充独立原始证据；搜索摘要、AI回答及无来源聚合页不可采用。<br>缺失：未找到、明确不适用、来源冲突分别输出 not_found、not_applicable、conflict，并附原因；value 为 null。不得写未知、暂无资料、N/A等占位内容，不得用0、false或空数组代表未知，不删除已有值。<br>冲突：比较同一主体、版本、时间和口径的原始证据；保留各候选值及证据，不投票、不平均、不按搜索排名选择，不自动覆盖旧值。不同时间或工况属于多个有条件事实，不冒充冲突。<br>证据：每个 found 值附支持该值的原文摘录、具体来源URL、source_kind、原文位置locator、资料日期source_date（不详则null）、实际访问日期accessed_at；不得编造网址、页码、日期或摘录。文本整理须逐项可追溯；URL字段的证据来自介绍该链接的页面。 |
-| history | 发展历程 | TEXT | sections.history | evidence_required | 合并同义字段，保留原始内容、来源和条件；不得重复填充已合并的旧字段。 |
 | research | 聚变相关研究 | TEXT | sections.research | evidence_required | 含义：机构明确开展的聚变研究、平台、代表项目与成果。<br>不包含：区分机构角色、合作角色与计划成果。<br>格式：有证据的连贯中文正文，可用Markdown和LaTeX；保留事实条件；不写采集过程、占位内容或未经支持的评价。<br>单位与条件：涉及数值时保留单位、误差、工况和来源时点。<br>适用性：仅当资料明确涉及本词条对应事实时采集；无对应事实不得推断。<br>来源：优先主体官方资料、原始论文或原始技术文档；权威二手资料须可追溯且不冒充独立原始证据；搜索摘要、AI回答及无来源聚合页不可采用。<br>缺失：未找到、明确不适用、来源冲突分别输出 not_found、not_applicable、conflict，并附原因；value 为 null。不得写未知、暂无资料、N/A等占位内容，不得用0、false或空数组代表未知，不删除已有值。<br>冲突：比较同一主体、版本、时间和口径的原始证据；保留各候选值及证据，不投票、不平均、不按搜索排名选择，不自动覆盖旧值。不同时间或工况属于多个有条件事实，不冒充冲突。<br>证据：每个 found 值附支持该值的原文摘录、具体来源URL、source_kind、原文位置locator、资料日期source_date（不详则null）、实际访问日期accessed_at；不得编造网址、页码、日期或摘录。文本整理须逐项可追溯；URL字段的证据来自介绍该链接的页面。 |
 | organization_structure | 组织架构 | TEXT | sections.organization_structure | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
 | key_programs | 重点项目与成果 | TEXT | sections.key_programs | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
 | technology_transfer | 技术转移与产业活动 | TEXT | sections.technology_transfer | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
 | collaboration | 国内外合作 | TEXT | sections.collaboration | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
+| timeline | 机构发展时间轴 | TEXT | fields.timeline | evidence_required | 有关本机构的全部已收录事件，以数组保存；每项含稳定id、date（YYYY、YYYY-MM、YYYY-MM-DD或null）、title、kind、description、source_url。kind为founding（成立）、research（研究）、product（产品）、funding（融资）、investment（投资）、partnership（合作）、team（团队）、policy（政策）、award（荣誉）、restructuring（重组）或other。计划标记state=planned，已发生为occurred，未核实为unknown；未知日期不猜测。可关联多个机构、人物、装置及报告的真实entity_id。 |
+| organization_category | 机构大类 | TEXT | fields.organization_category | evidence_required | 仅允许enterprise_research（企业与科研机构）、investment（投资机构）、public（公共机构）。公共机构包括政府部门、协会、学会和国际组织；保留organization_type细分性质；未核实时为空，不从名称猜测。 |
+| main_business | 主营业务 | TEXT | fields.main_business | evidence_required | 主营业务与服务对象，保留来源与适用时间；科研机构可填主要研究业务，不与具体products_services产品清单重复。 |
+| team_members | 团队成员 | TEXT | fields.team_members | evidence_required | 公开团队成员及职务、任职起止时间、来源；可关联真实人物entity_id，未知不创建虚假ID；不含非公开个人资料。 |
+| financing_opportunities | 融资与资助机会 | TEXT | fields.financing_opportunities | evidence_required | 投资机构与公共机构均适用。direction=offered表示对外投资、资助、补贴或招募项目；direction=sought表示自身募资。记录title、工具或方式、金额与币种、阶段、申请条件、截止时间、状态及来源URL，不把已完成投资当作开放机会。 |
+| investment_timeline | 已投资项目时间轴 | TEXT | fields.investment_timeline | evidence_required | 仅投资机构适用；按每次投资事件记录稳定id、date、title、kind=investment、description、project（名称和真实entity_id）、round、amount、currency、role、source_url。重复投资分轮次，未知金额为空；同一事件在发展时间轴中复用id。 |
+| assets_under_management | 管理资产与基金规模 | TEXT | fields.assets_under_management | evidence_required | 仅投资机构适用；区分管理资产AUM、单只基金规模、累计投资额，不相加；记录value、currency、scale_type、统计日期及来源。团队人数复用staff_scale。 |
+| capital_nature | 资本性质 | TEXT | fields.capital_nature | evidence_required | 机构自身资本的国资、民资、混合、外资等性质与依据；可多选，保留日期，不与被投对象偏好混用。 |
+| investment_preferences | 投资与融资偏好 | TEXT | fields.investment_preferences | evidence_required | 记录偏好的被投对象资本性质（国资、民资、混合、外资或不限）、投资阶段、地区、单笔金额区间、币种和融资方式；仅据公开信息填写，不从自身资本性质推断。关注领域复用research_fields。 |
+| related_organizations | 推荐相关机构 | TEXT | fields.related_organizations | system | 程序按明确合作关系优先、共同研究或关注领域次之推荐库内机构；排除自身，返回真实entity_id与推荐原因，不由采集模型填充。 |
+| quality_score | 质量分数 | REAL | fields.quality_score | system | 0～100；程序计算：40%完备性＋40%证据覆盖可信度＋20%格式有效率。任一分项无法评估时留空；不代表学术价值。 |
+| completeness_score | 完备性评分 | REAL | fields.completeness_score | system | 0～100；有效非空内容字段数／适用内容字段数×100。排除身份、程序计算、暂停采集字段；有核查记录的not_applicable排除分母。 |
+| credibility_score | 可信度评分 | REAL | fields.credibility_score | system | 0～100；已填字段中具有可追溯原始来源和摘录的字段占比。仅衡量证据覆盖，不保证事实真实；排除history审计来源，无内容留空。 |
+| fusion_relevance_score | 聚变相关度评分 | REAL | fields.fusion_relevance_score | system | 0～100；内容中的明确聚变主题命中为100，聚变支撑技术为60，一般等离子体为30，未命中为0，无内容留空。按版本化词表匹配，不以文件名、URL、证据日志或本评分字段作为输入。 |
 
 ## 人物
 
@@ -390,6 +425,10 @@
 | scientific_impact | 学术影响 | TEXT | sections.scientific_impact | paused | 人物新增采集统一暂停，保留现有内容，恢复前不自动补充身份、履历和关系。 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
 | teaching_and_service | 教学与学术服务 | TEXT | sections.teaching_and_service | paused | 人物新增采集统一暂停，保留现有内容，恢复前不自动补充身份、履历和关系。 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
 | career_timeline | 生平与研究年表 | TEXT | sections.career_timeline | paused | 人物新增采集统一暂停，保留现有内容，恢复前不自动补充身份、履历和关系。 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
+| quality_score | 质量分数 | REAL | fields.quality_score | system | 0～100；程序计算：40%完备性＋40%证据覆盖可信度＋20%格式有效率。任一分项无法评估时留空；不代表学术价值。 |
+| completeness_score | 完备性评分 | REAL | fields.completeness_score | system | 0～100；有效非空内容字段数／适用内容字段数×100。排除身份、程序计算、暂停采集字段；有核查记录的not_applicable排除分母。 |
+| credibility_score | 可信度评分 | REAL | fields.credibility_score | system | 0～100；已填字段中具有可追溯原始来源和摘录的字段占比。仅衡量证据覆盖，不保证事实真实；排除history审计来源，无内容留空。 |
+| fusion_relevance_score | 聚变相关度评分 | REAL | fields.fusion_relevance_score | system | 0～100；内容中的明确聚变主题命中为100，聚变支撑技术为60，一般等离子体为30，未命中为0，无内容留空。按版本化词表匹配，不以文件名、URL、证据日志或本评分字段作为输入。 |
 
 ## 课程
 
@@ -437,6 +476,10 @@
 | key_topics | 核心主题与知识要点 | TEXT | sections.key_topics | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
 | supporting_materials | 配套资料与资源 | TEXT | sections.supporting_materials | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
 | fusion_applications | 聚变研究中的应用 | TEXT | sections.fusion_applications | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
+| quality_score | 质量分数 | REAL | fields.quality_score | system | 0～100；程序计算：40%完备性＋40%证据覆盖可信度＋20%格式有效率。任一分项无法评估时留空；不代表学术价值。 |
+| completeness_score | 完备性评分 | REAL | fields.completeness_score | system | 0～100；有效非空内容字段数／适用内容字段数×100。排除身份、程序计算、暂停采集字段；有核查记录的not_applicable排除分母。 |
+| credibility_score | 可信度评分 | REAL | fields.credibility_score | system | 0～100；已填字段中具有可追溯原始来源和摘录的字段占比。仅衡量证据覆盖，不保证事实真实；排除history审计来源，无内容留空。 |
+| fusion_relevance_score | 聚变相关度评分 | REAL | fields.fusion_relevance_score | system | 0～100；内容中的明确聚变主题命中为100，聚变支撑技术为60，一般等离子体为30，未命中为0，无内容留空。按版本化词表匹配，不以文件名、URL、证据日志或本评分字段作为输入。 |
 
 ## 会议
 
@@ -463,6 +506,10 @@
 | related_papers | 关联论文 | TEXT | fields.related_papers | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
 | related_devices | 关联装置 | TEXT | fields.related_devices | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
 | additional_information | 其他会议信息 | TEXT | fields.additional_information | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
+| quality_score | 质量分数 | REAL | fields.quality_score | system | 0～100；程序计算：40%完备性＋40%证据覆盖可信度＋20%格式有效率。任一分项无法评估时留空；不代表学术价值。 |
+| completeness_score | 完备性评分 | REAL | fields.completeness_score | system | 0～100；有效非空内容字段数／适用内容字段数×100。排除身份、程序计算、暂停采集字段；有核查记录的not_applicable排除分母。 |
+| credibility_score | 可信度评分 | REAL | fields.credibility_score | system | 0～100；已填字段中具有可追溯原始来源和摘录的字段占比。仅衡量证据覆盖，不保证事实真实；排除history审计来源，无内容留空。 |
+| fusion_relevance_score | 聚变相关度评分 | REAL | fields.fusion_relevance_score | system | 0～100；内容中的明确聚变主题命中为100，聚变支撑技术为60，一般等离子体为30，未命中为0，无内容留空。按版本化词表匹配，不以文件名、URL、证据日志或本评分字段作为输入。 |
 
 ## 科学词条
 
@@ -476,6 +523,10 @@
 | name | 规范名称 | TEXT | identity.name | system | 保留现有身份信息，不改变词条ID与主体。 |
 | name_en | 英文原名 | TEXT | identity.name_en | system | 保留现有身份信息，不改变词条ID与主体。 |
 | content | 词条内容 | TEXT | fields.content | evidence_required | 自由JSON内容，没有预设键名、栏目或固定格式。依据本词条实际资料组织内容，允许任意对象、数组与嵌套结构；不能凭空编造事实，采用内容仍需证据。 |
+| quality_score | 质量分数 | REAL | fields.quality_score | system | 0～100；程序计算：40%完备性＋40%证据覆盖可信度＋20%格式有效率。任一分项无法评估时留空；不代表学术价值。 |
+| completeness_score | 完备性评分 | REAL | fields.completeness_score | system | 0～100；有效非空内容字段数／适用内容字段数×100。排除身份、程序计算、暂停采集字段；有核查记录的not_applicable排除分母。 |
+| credibility_score | 可信度评分 | REAL | fields.credibility_score | system | 0～100；已填字段中具有可追溯原始来源和摘录的字段占比。仅衡量证据覆盖，不保证事实真实；排除history审计来源，无内容留空。 |
+| fusion_relevance_score | 聚变相关度评分 | REAL | fields.fusion_relevance_score | system | 0～100；内容中的明确聚变主题命中为100，聚变支撑技术为60，一般等离子体为30，未命中为0，无内容留空。按版本化词表匹配，不以文件名、URL、证据日志或本评分字段作为输入。 |
 
 ### 科学概念（concept）
 
@@ -487,6 +538,10 @@
 | name | 规范名称 | TEXT | identity.name | system | 保留现有身份信息，不改变词条ID与主体。 |
 | name_en | 英文原名 | TEXT | identity.name_en | system | 保留现有身份信息，不改变词条ID与主体。 |
 | content | 词条内容 | TEXT | fields.content | evidence_required | 自由JSON内容，没有预设键名、栏目或固定格式。依据本词条实际资料组织内容，允许任意对象、数组与嵌套结构；不能凭空编造事实，采用内容仍需证据。 |
+| quality_score | 质量分数 | REAL | fields.quality_score | system | 0～100；程序计算：40%完备性＋40%证据覆盖可信度＋20%格式有效率。任一分项无法评估时留空；不代表学术价值。 |
+| completeness_score | 完备性评分 | REAL | fields.completeness_score | system | 0～100；有效非空内容字段数／适用内容字段数×100。排除身份、程序计算、暂停采集字段；有核查记录的not_applicable排除分母。 |
+| credibility_score | 可信度评分 | REAL | fields.credibility_score | system | 0～100；已填字段中具有可追溯原始来源和摘录的字段占比。仅衡量证据覆盖，不保证事实真实；排除history审计来源，无内容留空。 |
+| fusion_relevance_score | 聚变相关度评分 | REAL | fields.fusion_relevance_score | system | 0～100；内容中的明确聚变主题命中为100，聚变支撑技术为60，一般等离子体为30，未命中为0，无内容留空。按版本化词表匹配，不以文件名、URL、证据日志或本评分字段作为输入。 |
 
 ### 诊断技术（diagnostic）
 
@@ -498,6 +553,10 @@
 | name | 规范名称 | TEXT | identity.name | system | 保留现有身份信息，不改变词条ID与主体。 |
 | name_en | 英文原名 | TEXT | identity.name_en | system | 保留现有身份信息，不改变词条ID与主体。 |
 | content | 词条内容 | TEXT | fields.content | evidence_required | 自由JSON内容，没有预设键名、栏目或固定格式。依据本词条实际资料组织内容，允许任意对象、数组与嵌套结构；不能凭空编造事实，采用内容仍需证据。 |
+| quality_score | 质量分数 | REAL | fields.quality_score | system | 0～100；程序计算：40%完备性＋40%证据覆盖可信度＋20%格式有效率。任一分项无法评估时留空；不代表学术价值。 |
+| completeness_score | 完备性评分 | REAL | fields.completeness_score | system | 0～100；有效非空内容字段数／适用内容字段数×100。排除身份、程序计算、暂停采集字段；有核查记录的not_applicable排除分母。 |
+| credibility_score | 可信度评分 | REAL | fields.credibility_score | system | 0～100；已填字段中具有可追溯原始来源和摘录的字段占比。仅衡量证据覆盖，不保证事实真实；排除history审计来源，无内容留空。 |
+| fusion_relevance_score | 聚变相关度评分 | REAL | fields.fusion_relevance_score | system | 0～100；内容中的明确聚变主题命中为100，聚变支撑技术为60，一般等离子体为30，未命中为0，无内容留空。按版本化词表匹配，不以文件名、URL、证据日志或本评分字段作为输入。 |
 
 ### 材料与燃料（material）
 
@@ -509,6 +568,10 @@
 | name | 规范名称 | TEXT | identity.name | system | 保留现有身份信息，不改变词条ID与主体。 |
 | name_en | 英文原名 | TEXT | identity.name_en | system | 保留现有身份信息，不改变词条ID与主体。 |
 | content | 词条内容 | TEXT | fields.content | evidence_required | 自由JSON内容，没有预设键名、栏目或固定格式。依据本词条实际资料组织内容，允许任意对象、数组与嵌套结构；不能凭空编造事实，采用内容仍需证据。 |
+| quality_score | 质量分数 | REAL | fields.quality_score | system | 0～100；程序计算：40%完备性＋40%证据覆盖可信度＋20%格式有效率。任一分项无法评估时留空；不代表学术价值。 |
+| completeness_score | 完备性评分 | REAL | fields.completeness_score | system | 0～100；有效非空内容字段数／适用内容字段数×100。排除身份、程序计算、暂停采集字段；有核查记录的not_applicable排除分母。 |
+| credibility_score | 可信度评分 | REAL | fields.credibility_score | system | 0～100；已填字段中具有可追溯原始来源和摘录的字段占比。仅衡量证据覆盖，不保证事实真实；排除history审计来源，无内容留空。 |
+| fusion_relevance_score | 聚变相关度评分 | REAL | fields.fusion_relevance_score | system | 0～100；内容中的明确聚变主题命中为100，聚变支撑技术为60，一般等离子体为30，未命中为0，无内容留空。按版本化词表匹配，不以文件名、URL、证据日志或本评分字段作为输入。 |
 
 ### 研究方法（method）
 
@@ -520,6 +583,10 @@
 | name | 规范名称 | TEXT | identity.name | system | 保留现有身份信息，不改变词条ID与主体。 |
 | name_en | 英文原名 | TEXT | identity.name_en | system | 保留现有身份信息，不改变词条ID与主体。 |
 | content | 词条内容 | TEXT | fields.content | evidence_required | 自由JSON内容，没有预设键名、栏目或固定格式。依据本词条实际资料组织内容，允许任意对象、数组与嵌套结构；不能凭空编造事实，采用内容仍需证据。 |
+| quality_score | 质量分数 | REAL | fields.quality_score | system | 0～100；程序计算：40%完备性＋40%证据覆盖可信度＋20%格式有效率。任一分项无法评估时留空；不代表学术价值。 |
+| completeness_score | 完备性评分 | REAL | fields.completeness_score | system | 0～100；有效非空内容字段数／适用内容字段数×100。排除身份、程序计算、暂停采集字段；有核查记录的not_applicable排除分母。 |
+| credibility_score | 可信度评分 | REAL | fields.credibility_score | system | 0～100；已填字段中具有可追溯原始来源和摘录的字段占比。仅衡量证据覆盖，不保证事实真实；排除history审计来源，无内容留空。 |
+| fusion_relevance_score | 聚变相关度评分 | REAL | fields.fusion_relevance_score | system | 0～100；内容中的明确聚变主题命中为100，聚变支撑技术为60，一般等离子体为30，未命中为0，无内容留空。按版本化词表匹配，不以文件名、URL、证据日志或本评分字段作为输入。 |
 
 ### 研究计划（program）
 
@@ -531,6 +598,10 @@
 | name | 规范名称 | TEXT | identity.name | system | 保留现有身份信息，不改变词条ID与主体。 |
 | name_en | 英文原名 | TEXT | identity.name_en | system | 保留现有身份信息，不改变词条ID与主体。 |
 | content | 词条内容 | TEXT | fields.content | evidence_required | 自由JSON内容，没有预设键名、栏目或固定格式。依据本词条实际资料组织内容，允许任意对象、数组与嵌套结构；不能凭空编造事实，采用内容仍需证据。 |
+| quality_score | 质量分数 | REAL | fields.quality_score | system | 0～100；程序计算：40%完备性＋40%证据覆盖可信度＋20%格式有效率。任一分项无法评估时留空；不代表学术价值。 |
+| completeness_score | 完备性评分 | REAL | fields.completeness_score | system | 0～100；有效非空内容字段数／适用内容字段数×100。排除身份、程序计算、暂停采集字段；有核查记录的not_applicable排除分母。 |
+| credibility_score | 可信度评分 | REAL | fields.credibility_score | system | 0～100；已填字段中具有可追溯原始来源和摘录的字段占比。仅衡量证据覆盖，不保证事实真实；排除history审计来源，无内容留空。 |
+| fusion_relevance_score | 聚变相关度评分 | REAL | fields.fusion_relevance_score | system | 0～100；内容中的明确聚变主题命中为100，聚变支撑技术为60，一般等离子体为30，未命中为0，无内容留空。按版本化词表匹配，不以文件名、URL、证据日志或本评分字段作为输入。 |
 
 ### 物理量（quantity）
 
@@ -542,3 +613,7 @@
 | name | 规范名称 | TEXT | identity.name | system | 保留现有身份信息，不改变词条ID与主体。 |
 | name_en | 英文原名 | TEXT | identity.name_en | system | 保留现有身份信息，不改变词条ID与主体。 |
 | content | 词条内容 | TEXT | fields.content | evidence_required | 自由JSON内容，没有预设键名、栏目或固定格式。依据本词条实际资料组织内容，允许任意对象、数组与嵌套结构；不能凭空编造事实，采用内容仍需证据。 |
+| quality_score | 质量分数 | REAL | fields.quality_score | system | 0～100；程序计算：40%完备性＋40%证据覆盖可信度＋20%格式有效率。任一分项无法评估时留空；不代表学术价值。 |
+| completeness_score | 完备性评分 | REAL | fields.completeness_score | system | 0～100；有效非空内容字段数／适用内容字段数×100。排除身份、程序计算、暂停采集字段；有核查记录的not_applicable排除分母。 |
+| credibility_score | 可信度评分 | REAL | fields.credibility_score | system | 0～100；已填字段中具有可追溯原始来源和摘录的字段占比。仅衡量证据覆盖，不保证事实真实；排除history审计来源，无内容留空。 |
+| fusion_relevance_score | 聚变相关度评分 | REAL | fields.fusion_relevance_score | system | 0～100；内容中的明确聚变主题命中为100，聚变支撑技术为60，一般等离子体为30，未命中为0，无内容留空。按版本化词表匹配，不以文件名、URL、证据日志或本评分字段作为输入。 |

@@ -8,6 +8,8 @@ import {DatabaseSync} from 'node:sqlite';
 import {paths} from '../src/server/encyclopedia/config.ts';
 import {exportDatabase} from '../src/server/encyclopedia/export-database.ts';
 import {applySchemaMigration,schemaFingerprint,preserveNonNameEnglishValue} from '../src/server/encyclopedia/schema-migration.mjs';
+import {readDetail} from '../src/server/encyclopedia/database.ts';
+import {updateComputedFields} from '../src/server/encyclopedia/computed.ts';
 
 test('legacy review objects in English-name columns remain review data', function () {
  const original = {state:'reviewed',basis:'source evidence'};
@@ -54,7 +56,31 @@ test('migrate an isolated real-schema subset: values, deletion, triggers, free J
   assert.equal(db.prepare("SELECT count(*) n FROM wiki_entry_profiles WHERE type_key IN ('event','code')").get().n,0);
   assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(),[]);
   const concept=db.prepare("SELECT * FROM wiki_entry_profiles WHERE type_key='concept'").get();
-  assert.deepEqual(Object.keys(JSON.parse(concept.fields)),['content']);
+  assert.deepEqual(Object.keys(JSON.parse(concept.fields)),['content',...contract.SCORE_KEYS]);
+  for (const type of db.prepare('SELECT key FROM wiki_entry_types').all()) {
+   const columns=db.prepare('PRAGMA table_info(wiki_type_'+type.key+')').all();
+   for(const key of contract.SCORE_KEYS) {
+    assert.equal(columns.find(column=>column.name===key).type,'REAL');
+    assert.equal(db.prepare('SELECT count(*) n FROM wiki_type_'+type.key+' WHERE '+key+' IS NOT NULL').get().n,0,'migration must not score existing content');
+   }
+  }
+  const config={...paths,database:file,dataRoot:path.join(portal,'data')};
+  const detail=readDetail(config,concept.entity_id,db);
+  assert.ok(detail.fields.filter(field=>contract.SCORE_KEYS.includes(field.fieldKey)).every(field=>!field.writable));
+  const scored={content:{overview:'核聚变科学'}};
+  updateComputedFields(config,db,detail,scored,{});
+  assert.equal(scored.completeness_score,100);
+  assert.equal(scored.fusion_relevance_score,100);
+  db.prepare('UPDATE wiki_entry_profiles SET fields=? WHERE entity_id=?').run(JSON.stringify(scored),concept.entity_id);
+  const scoredReadback=readDetail(config,concept.entity_id,db);
+  assert.equal(scoredReadback.fields.find(field=>field.fieldKey==='completeness_score').value,100);
+  assert.throws(()=>db.prepare('UPDATE wiki_type_concept SET quality_score=101 WHERE entity_id=?').run(concept.entity_id),/CHECK constraint/);
+  const paper=db.prepare("SELECT entity_id FROM wiki_entry_profiles WHERE type_key='paper'").get();
+  const paperDetail=readDetail(config,paper.entity_id,db);
+  for(const key of ['internal_citation_count','is_highly_cited']) {
+   const field=paperDetail.fields.find(field=>field.fieldKey===key);
+   assert.equal(field.value,null);assert.equal(field.writable,false);
+  }
   const device=db.prepare("SELECT * FROM wiki_entry_profiles WHERE type_key='device'").get();
   const fields=JSON.parse(device.fields);
   fields.principle={mechanism:'隔离验证',arbitrary:['A','B']};
@@ -68,7 +94,7 @@ test('migrate an isolated real-schema subset: values, deletion, triggers, free J
   const migratedOrg=db.prepare('SELECT name_en,aliases FROM wiki_type_org WHERE entity_id=?').get(organization.entity_id);
   assert.equal(migratedOrg.name_en,null);
   assert.ok(JSON.stringify(JSON.parse(migratedOrg.aliases)).includes(JSON.stringify(legacyName)));
-  assert.equal(db.prepare("SELECT count(*) n FROM wiki_column_fields WHERE type_key='person' AND storage<>'identity' AND collection_mode<>'paused'").get().n,0);
+  assert.equal(db.prepare("SELECT count(*) n FROM wiki_column_fields WHERE type_key='person' AND storage<>'identity' AND collection_mode NOT IN ('paused','system')").get().n,0);
   assert.equal(db.prepare("SELECT collection_mode FROM wiki_column_fields WHERE type_key='device' AND field_key='assessment'").get().collection_mode,'paused');
  }finally{db.close();}
 });

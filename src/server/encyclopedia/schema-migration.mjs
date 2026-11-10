@@ -59,6 +59,7 @@ export function migrationPlan(db, contract) {
         type: row.value_type,
         group: row.group_name,
         description: row.description,
+        collectionMode: row.collection_mode,
         old: row,
       };
     });
@@ -429,6 +430,8 @@ export function applySchemaMigration(db, contract, fingerprint) {
       db.exec("DROP TRIGGER " + quote(row.name));
     for (const plan of plans) {
       const columns = plan.definitions.map(function column(item) {
+        if (contract.SCORE_KEYS?.includes(item.key)) return quote(item.column) + ' REAL CHECK(' + quote(item.column) + ' IS NULL OR (typeof(' + quote(item.column) + ") IN ('integer','real') AND " + quote(item.column) + ' BETWEEN 0 AND 100))';
+        if (item.key === 'internal_citation_count') return quote(item.column) + ' INTEGER CHECK(' + quote(item.column) + ' IS NULL OR (typeof(' + quote(item.column) + ")='integer' AND " + quote(item.column) + '>=0))';
         return quote(item.column) + " TEXT";
       });
       db.exec(

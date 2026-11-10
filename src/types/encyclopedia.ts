@@ -40,7 +40,7 @@ export const categories = [
   {
     key: "org",
     name: "机构",
-    description: "研究机构、大学与科学组织",
+    description: "企业与科研机构、投资机构、公共机构",
     mark: "05",
     types: ["org"],
   },

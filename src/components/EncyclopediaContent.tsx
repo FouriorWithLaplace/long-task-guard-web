@@ -145,8 +145,13 @@ export default function EncyclopediaContent({
   field: string;
   entityId?: number;
 }) {
+  if (field === 'organization_category' && typeof value === 'string') {
+    const names: Record<string,string> = {enterprise_research:'企业与科研机构',investment:'投资机构',public:'公共机构'};
+    return <span>{names[value] || value}</span>;
+  }
+  if (field === 'is_highly_cited') return <span>{value===true?'高被引':value===false?'未达高被引标准':'尚未计算'}</span>;
   if (
-    field === "timeline" && Array.isArray(value) &&
+    ["timeline", "investment_timeline"].includes(field) && Array.isArray(value) &&
     value.every(function event(item) { return "date" in record(item) && "title" in record(item); })
   ) {
     const events = value.map(record).sort(function chronological(a, b) {
@@ -165,6 +170,7 @@ export default function EncyclopediaContent({
             <li key={String(item.id || index)}>
               <time>{String(item.date || "日期未明确")}</time>
               <strong>{String(item.title || "时间记录")}</strong>
+              {item.kind?<span data-event-kind={String(item.kind)}>{({founding:'成立',research:'研究',product:'产品',funding:'融资',investment:'投资',partnership:'合作',team:'团队',policy:'政策',award:'荣誉',restructuring:'重组',other:'其他',milestone:'里程碑',status:'状态变化',experiment:'实验',achievement:'成果',result:'结果',decommissioning:'退役'} as Record<string,string>)[String(item.kind)]||String(item.kind)}</span>:null}
               <JsonContent value={item.description || null} />
               {Object.keys(extra).length ? <JsonContent value={extra} /> : null}
               {item.details ? (

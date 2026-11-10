@@ -21,8 +21,12 @@ export function normalizeStructuredValue(
   field: string,
   value: Json,
 ): Json {
-  if (type !== "device") return value;
-  if (field === "fields.timeline") {
+  if (type === 'org' && field === 'fields.organization_category') {
+    if (!['enterprise_research','investment','public'].includes(String(value))) throw new Error('机构大类必须为企业与科研机构、投资机构或公共机构的约定值。');
+    return value;
+  }
+  if (!['device','org'].includes(type)) return value;
+  if (field === "fields.timeline" || type === 'org' && field === 'fields.investment_timeline') {
     if (!Array.isArray(value)) throw new Error("时间轴必须是 JSON 数组。");
     const ids = new Set<string>();
     const events = value.map(function normalizeEvent(item) {
@@ -43,6 +47,12 @@ export function normalizeStructuredValue(
       for (const key of ["title", "kind", "description"])
         if (typeof row[key] !== "string")
           throw new Error("时间轴记录需包含 title、kind、description 文本。");
+      if (type === 'org') {
+        const kinds=['founding','research','product','funding','investment','partnership','team','policy','award','restructuring','other'];
+        if (!kinds.includes(String(row.kind))) throw new Error('机构时间轴事件类型不合法。');
+        if (field === 'fields.investment_timeline' && row.kind !== 'investment') throw new Error('已投资项目时间轴必须使用 investment 类型。');
+        if (typeof row.source_url !== 'string' || !/^https?:\/\//i.test(row.source_url)) throw new Error('机构事件需保留公开来源 URL。');
+      }
       return row;
     });
     return events.sort(function chronological(left, right) {

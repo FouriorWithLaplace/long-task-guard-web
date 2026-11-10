@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { gunzipSync } from "node:zlib";
 import { isDeepStrictEqual } from "node:util";
 import { normalizeStructuredValue } from "./structured-value.ts";
+import { updateComputedFields } from './computed.ts';
 import {
   hash,
   object,
@@ -238,7 +239,7 @@ export class EntryWriter {
     if (!adopting) result.value = field.value; // 缺资料不是清空已有内容的理由。
     if (adopting) {
       validateValue(result.value, field.valueType);
-      if (detail.fields.some(function revised(item) { return item.key === "fields.component_suppliers"; }))
+      if (detail.type === 'org' || detail.fields.some(function revised(item) { return item.key === "fields.component_suppliers"; }))
         result.value = normalizeStructuredValue(detail.type, result.field, result.value);
     }
     result.changed = !isDeepStrictEqual(field.value, result.value);
@@ -354,6 +355,8 @@ export class EntryWriter {
           source.excerpt,
         );
       }
+      updateComputedFields(this.config, db, detail, fields, sections,
+        Object.entries(task.results).filter(function notApplicable([, item]) { return item.outcome === 'not_applicable' && item.readback; }).map(function field([key]) { return key; }));
       db.prepare(
         "UPDATE wiki_entry_profiles SET fields=?,sections=?,version=version+1,updated_at=datetime('now'),state='pending',is_presentable=0,reason=? WHERE entity_id=? AND version=?",
       ).run(
