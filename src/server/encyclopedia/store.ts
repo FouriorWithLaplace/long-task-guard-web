@@ -1,7 +1,8 @@
 import { DatabaseSync } from "node:sqlite";
 import fs from "node:fs";
 import path from "node:path";
-import type { EntryTask, FieldResult } from "../../types/encyclopedia.ts";
+import type { EntryDetail, EntryTask, FieldResult } from "../../types/encyclopedia.ts";
+import { reconcileTaskSchema } from "./task-schema.ts";
 import { panelDirectory } from "./config.ts";
 import type { EncyclopediaPaths } from "./config.ts";
 import { summarizeTask } from "./task-summary.ts";
@@ -72,6 +73,18 @@ export class TaskStore {
   getSummary(id: number): EntryTask | null {
     const row = this.db.prepare("SELECT body FROM task_summaries WHERE entity_id=?").get(id);
     return row ? JSON.parse(String(row.body)) : null;
+  }
+  alignWithDatabase(id: number, detail: Pick<EntryDetail, "fields" | "dictionaryHash">) {
+    // Re-read under the task write lock so a concurrent start or submit is never overwritten.
+    return this.transaction(this.alignCurrentTask.bind(this, id, detail));
+  }
+  private alignCurrentTask(id: number, detail: Pick<EntryDetail, "fields" | "dictionaryHash">) {
+    const task = this.get(id);
+    if (!task || task.desired === "running" || task.sessionId || task.slotHeld ||
+        task.unconfirmed || task.phase === "stopping" || this.hasPendingIntents(id)) return false;
+    if (!reconcileTaskSchema(task, detail)) return false;
+    this.save(task, "database_aligned");
+    return true;
   }
   listSummaries(runningOnly = false): EntryTask[] {
     const where = runningOnly ? " WHERE desired='running'" : "";

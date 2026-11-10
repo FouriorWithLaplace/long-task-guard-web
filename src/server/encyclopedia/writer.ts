@@ -233,6 +233,7 @@ export class EntryWriter {
       return item.key === result.field;
     });
     if (!field) throw new Error("字段不存在。");
+    if (!field.writable) throw new Error("身份字段、暂停采集字段和程序计算字段不允许通过资料采集提交；程序字段须由程序写入并回读。");
     validateSources(this.config, task, result.evidence);
     const adopting =
       result.outcome === "verified" || result.outcome === "tentative";
@@ -243,8 +244,6 @@ export class EntryWriter {
         result.value = normalizeStructuredValue(detail.type, result.field, result.value);
     }
     result.changed = !isDeepStrictEqual(field.value, result.value);
-    if (result.changed && !field.writable)
-      throw new Error("该字段为身份字段或暂停采集字段，不允许自动修改。");
     if (!result.changed) {
       const readback = readDetail(this.config, task.entityId);
       if (

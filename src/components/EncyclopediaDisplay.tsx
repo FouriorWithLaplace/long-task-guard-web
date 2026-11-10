@@ -1,6 +1,6 @@
 import type { EntryTask, FieldDefinition, Json, ProgressCounts } from "@/types/encyclopedia";
 import EncyclopediaContent from "./EncyclopediaContent";
-import { outcomeLabels, phaseLabels, processedFieldKeys, taskFilterGroup, taskFilters, taskProgress } from "@/types/encyclopedia";
+import { fieldIsProcessed, isProgramField, outcomeLabels, phaseLabels, taskFilterGroup, taskFilters, taskProgress } from "@/types/encyclopedia";
 
 export function formatDate(value: string) {
   return new Date(value).toLocaleString("zh-CN", {
@@ -114,7 +114,8 @@ export function FieldRow({
   entityId?: number;
 }) {
   const result = task?.results[field.key];
-  const processed = processedFieldKeys(task).includes(field.key);
+  const processed = fieldIsProcessed(field, task);
+  const program = isProgramField(field);
   return (
     <details className="ep-field">
       <summary>
@@ -135,7 +136,7 @@ export function FieldRow({
             (result?.outcome === "verified" ? "ep-status-completed" : "")
           }
         >
-          {!field.writable ? "只读 · 不计入进度" : !processed
+          {program ? processed ? "程序计算 · 已完成" : "程序计算 · 未完成" : !field.writable ? "只读 · 不计入进度" : !processed
             ? result ? "待重新处理" : "未处理"
             : result ? outcomeLabels[result.outcome] : "未处理"}
         </span>
@@ -148,7 +149,7 @@ export function FieldRow({
         <EncyclopediaContent value={field.value} field={field.fieldKey} entityId={entityId||task?.entityId}/>
         <p className="ep-muted">
           {field.description}
-          {!field.writable && " 此字段不允许自动修改。"}
+          {program ? " 此字段由程序计算并写入数据库，计入总进度。" : !field.writable && " 此字段不允许自动修改。"}
         </p>
         {result && (
           <div className="ep-evidence">

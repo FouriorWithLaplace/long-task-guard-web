@@ -253,6 +253,9 @@ export interface EntryTask {
   reasoning: string;
   scope: string[];
   dictionaryHash: string;
+  // Program results are read from the database, never submitted as research claims.
+  computedFields?: Record<string, boolean>;
+  fieldRuleHashes?: Record<string, string>;
   skillHash: string;
   results: Record<string, FieldResult>;
   startedAt: string;
@@ -280,7 +283,12 @@ export function taskProgress(task: EntryTask) {
   let pendingReview = 0;
   let missing = 0;
   let changed = 0;
-  for (const key of task.scope) {
+  const scope = [...new Set([...task.scope, ...Object.keys(task.computedFields || {})])];
+  for (const key of scope) {
+    if (Object.hasOwn(task.computedFields || {}, key)) {
+      if (task.computedFields![key]) checked++;
+      continue;
+    }
     const result = task.results[key];
     if (!result || !processed.has(key)) continue;
     if (result.readback) checked++;
@@ -290,13 +298,13 @@ export function taskProgress(task: EntryTask) {
     if (result.value === null && result.outcome !== "not_applicable") missing++;
     if (result.changed) changed++;
   }
-  const percent = task.scope.length
-    ? Math.floor((checked * 100) / task.scope.length)
+  const percent = scope.length
+    ? Math.floor((checked * 100) / scope.length)
     : 0;
   return {
     filled: Number.isFinite(task.filled) ? task.filled : undefined,
     checked,
-    total: task.scope.length,
+    total: scope.length,
     percent,
     verified,
     pendingReview,
@@ -314,20 +322,36 @@ export function hasFieldValue(value: Json): boolean {
   return true;
 }
 
+export function isProgramField(field: Pick<FieldDefinition, "storage" | "rules">) {
+  return field.storage !== "identity" && field.rules?.collection_mode === "system";
+}
+
+export function isTrackedField(field: Pick<FieldDefinition, "storage" | "rules" | "writable">) {
+  return field.writable || isProgramField(field);
+}
+
+export function hasProgramResult(value: Json): boolean {
+  // A computed empty list, zero or false is a valid result; null means not computed.
+  return value !== null && value !== undefined && (typeof value !== "string" || value.trim().length > 0);
+}
+
+export function fieldIsProcessed(field: FieldDefinition, task?: EntryTask | null): boolean {
+  if (isProgramField(field)) return hasProgramResult(field.value);
+  return processedFieldKeys(task).includes(field.key) && !!task?.results[field.key]?.readback;
+}
+
 export function fieldProgress(
   fields: FieldDefinition[],
   task?: EntryTask | null,
 ): ProgressCounts {
-  const processed = new Set(processedFieldKeys(task));
   let total = 0;
   let filled = 0;
   let checked = 0;
   for (const field of fields) {
-    if (!field.writable) continue;
+    if (!isTrackedField(field)) continue;
     total++;
-    if (hasFieldValue(field.value)) filled++;
-    if (processed.has(field.key) && task?.results[field.key]?.readback)
-      checked++;
+    if (isProgramField(field) ? hasProgramResult(field.value) : hasFieldValue(field.value)) filled++;
+    if (fieldIsProcessed(field, task)) checked++;
   }
   return { filled, checked, total, percent: total ? Math.floor(checked * 100 / total) : 0 };
 }

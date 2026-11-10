@@ -5,7 +5,7 @@ import { isDeepStrictEqual } from "node:util";
 import type { CodexConnection, CodexEvents } from "../codex-client.ts";
 import type { TerminalTarget } from "../codex-terminal.ts";
 import type { EntryTask, StartMode } from "../../types/encyclopedia.ts";
-import { fieldProgress, taskProgress } from "../../types/encyclopedia.ts";
+import { fieldIsProcessed, fieldProgress, hasProgramResult, isProgramField, isTrackedField, taskProgress } from "../../types/encyclopedia.ts";
 import { compareQueueOrder, readyToStart } from "../../types/task-queue.ts";
 import { hash, object, openDatabase, readEntrySummary, readDetail, readSource } from "./database.ts";
 import { panelDirectory } from "./config.ts";
@@ -134,9 +134,7 @@ export class EncyclopediaManager {
         const detail = readDetail(this.config, task.entityId);
         reconcileTaskSchema(task, detail);
         if (!task.skillHash) task.skillHash = this.saveSkill();
-        task.scope = detail.fields.filter(function writable(field) {
-          return field.writable;
-        }).map(function key(field) { return field.key; });
+        task.scope = detail.fields.filter(isTrackedField).map(function key(field) { return field.key; });
         task.filled = fieldProgress(detail.fields).filled;
         this.writer.recover(task);
         if (task.desired === "stopped" && task.phase !== "completed")
@@ -297,7 +295,13 @@ export class EncyclopediaManager {
       };
     } else {
       task = task!;
-      if (task.phase === "completed") return task;
+      if (task.phase === "completed") {
+        reconcileTaskSchema(task, readDetail(this.config, id, this.batchDatabase || undefined));
+        if (task.phase === "completed") {
+          this.save(task, "database_aligned");
+          return task;
+        }
+      }
       task.phase = "queued";
       task.desired = "running";
       task.model = model;
@@ -448,20 +452,30 @@ export class EncyclopediaManager {
     task.slotHeld = true;
     try {
       this.assertOwner();
+      this.writer.recover(task);
+      if (task.unconfirmed) throw new Error("存在未确认提交，将持续核对，确认前不重复写入。");
       const detail = readDetail(this.config, task.entityId);
       if (detail.state === "excluded") throw new Error("被排除的词条不允许启动采集。");
       if (!detail.fields.length) throw new Error("词条没有可用字段字典。");
-      if (task.dictionaryHash && task.dictionaryHash !== detail.dictionaryHash)
-        throw new Error("字段规则发生变化，请选择重新处理全部字段。");
-      task.dictionaryHash = detail.dictionaryHash;
-      task.scope = detail.fields.filter(function writable(field) { return field.writable; })
-        .map(function key(field) { return field.key; });
+      reconcileTaskSchema(task, detail);
       task.filled = fieldProgress(detail.fields).filled;
       if (!task.skillHash) task.skillHash = this.saveSkill();
-      this.writer.recover(task);
-      if (task.unconfirmed) throw new Error("存在未确认提交，将持续核对，确认前不重复写入。");
       if (this.completeIfReady(task)) {
         void this.cleanupDetached(task.entityId).finally(this.pump.bind(this));
+        return;
+      }
+      const researchPending = detail.fields.some(function pending(field) {
+        return field.writable && !fieldIsProcessed(field, task);
+      });
+      if (!researchPending && detail.fields.some(function pending(field) {
+        return isProgramField(field) && !hasProgramResult(field.value);
+      })) {
+        task.phase = "blocked";
+        task.desired = "stopped";
+        task.slotHeld = false;
+        task.message = "资料核查已完成，程序计算字段仍未完成；等待计算结果写入数据库。";
+        this.save(task, "awaiting_computation");
+        void this.cleanupDetached(task.entityId);
         return;
       }
     } catch (error) {
@@ -759,10 +773,9 @@ export class EncyclopediaManager {
   context(id: number) {
     const task = this.store.get(id);
     const detail = readDetail(this.config, id);
-    const remainingFields =
-      task?.scope.filter(function remaining(key) {
-        return !task.processedFields.includes(key) || !task.results[key]?.readback;
-      }) || [];
+    const remainingFields = detail.fields.filter(function remaining(field) {
+      return isTrackedField(field) && !fieldIsProcessed(field, task);
+    }).map(function key(field) { return field.key; });
     const batch = new Set(remainingFields.slice(0, 8));
     const fields = detail.fields
       .filter(function next(field) {
@@ -784,7 +797,7 @@ export class EncyclopediaManager {
         : null,
       remainingFields,
       instruction:
-        "fields 仅含接下来的最多 8 个字段；逐项提交后再次调用 entry_context。核查时可以复用同一次原件阅读。",
+        "fields 仅含接下来的最多 8 个字段；资料字段逐项提交后再次调用 entry_context。collection_mode=system 的字段须由程序计算写入，不能用 submit_field 提交猜测值；为空时任务仍未完成。",
     };
   }
   private toolRequest(
@@ -885,16 +898,22 @@ export class EncyclopediaManager {
     }
   }
   private completeIfReady(task: EntryTask) {
+    const detail = readDetail(this.config, task.entityId);
+    if (detail.dictionaryHash !== task.dictionaryHash) return false;
+    task.computedFields = {};
+    for (const field of detail.fields) {
+      if (isProgramField(field)) task.computedFields[field.key] = hasProgramResult(field.value);
+    }
+    task.scope = detail.fields.filter(isTrackedField).map(function key(field) { return field.key; });
     if (
       task.scope.some(function missing(key) {
+        if (Object.hasOwn(task.computedFields!, key)) return !task.computedFields![key];
         return !task.processedFields.includes(key) || !task.results[key]?.readback;
       })
     )
       return false;
     this.writer.recover(task);
     if (task.unconfirmed) return false;
-    const detail = readDetail(this.config, task.entityId);
-    if (detail.dictionaryHash !== task.dictionaryHash) return false;
     task.filled = fieldProgress(detail.fields).filled;
     for (const field of detail.fields) {
       if (!task.scope.includes(field.key)) continue;

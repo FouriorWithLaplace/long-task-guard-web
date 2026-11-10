@@ -137,6 +137,42 @@ test("progress counts existing content separately from processed fields and excl
   for (const value of [0, false, "hello", [0], { value: false }]) assert.equal(hasFieldValue(value), true);
 });
 
+test("program fields cannot be submitted by the model or bypassed when finishing a task", async function (t) {
+  const config=fixture();
+  const db=open(config);
+  db.exec("UPDATE wiki_column_fields SET collection_mode='system' WHERE field_key='notes'; UPDATE wiki_type_book SET notes=NULL");
+  db.close();
+  const {manager,clients}=runner(t,config);
+  manager.start(1,'test','high');
+  await settle();
+  for(const field of readDetail(config,1).fields) {
+    if(field.writable)clients[0].tool('submit_field',proposal(field.value,field.key));
+  }
+  const before=manager.get(1);
+  assert.equal(taskProgress(before).total,3);
+  assert.equal(taskProgress(before).checked,2);
+  assert.ok(manager.context(1).remainingFields.includes('fields.notes'));
+  clients[0].tool('submit_field',proposal('invented','fields.notes'));
+  assert.equal(readDetail(config,1).fields.find(function(f){return f.key==='fields.notes';}).value,null);
+  clients[0].tool('submit_field',{field:'fields.notes',outcome:'not_found',value:null,reason:'No computation',nextCondition:'Run program',evidence:[],candidates:[]});
+  assert.equal(manager.get(1).results['fields.notes'],undefined);
+  clients[0].tool('finish_task',{});
+  assert.notEqual(manager.get(1).phase,'completed');
+  await manager.stop(1);
+  assert.equal(taskFilterGroup(manager.get(1)),'partial');
+  manager.start(1,'test','high');
+  await settle();
+  assert.equal(manager.get(1).phase,'blocked');
+  assert.equal(manager.get(1).desired,'stopped');
+  const writer=open(config);
+  writer.exec("UPDATE wiki_type_book SET notes='Computed result' WHERE entity_id=1");
+  writer.close();
+  manager.start(1,'test','high');
+  await settle();
+  assert.equal(manager.get(1).phase,'completed');
+  assert.equal(taskProgress(manager.get(1)).percent,100);
+});
+
 test("repeated failures retain the slot indefinitely and stop releases it after cleanup", async function (t) {
   t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
   const { manager, clients } = runner(t, fixture());
@@ -1436,7 +1472,7 @@ test("writer works with the real book fixed-column schema and synchronization tr
   testDirectories.push(root);
   const config = {
     workspace: root,
-    dataRoot: root,
+    dataRoot: path.dirname(path.dirname(sourcePath)),
     database: path.join(root, "encyclopedia.db"),
   };
   const source = new DatabaseSync(sourcePath, { readOnly: true });
@@ -1512,7 +1548,10 @@ test("writer works with the real book fixed-column schema and synchronization tr
   assert.equal(result.readback, true);
   assert.ok(after.version > before.version);
   for (const field of before.fields) {
-    if (field.key !== "fields.publisher")
+    if (field.storage !== 'identity' && field.rules.collection_mode === 'system') {
+      const value=after.fields.find(function(current){return current.key===field.key;}).value;
+      if (field.fieldKey.endsWith('_score')) assert.ok(typeof value==='number' && value>=0 && value<=100,field.key+' recalculated');
+    } else if (field.key !== "fields.publisher")
       assert.deepEqual(
         after.fields.find((f) => f.key === field.key).value,
         field.value,

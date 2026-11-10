@@ -6,7 +6,10 @@ import type { FormEvent } from "react";
 import {
   categories,
   fieldProgress,
-  processedFieldKeys,
+  fieldIsProcessed,
+  hasProgramResult,
+  isProgramField,
+  isTrackedField,
   hasFieldValue,
   taskProgress,
   taskFilters,
@@ -498,7 +501,6 @@ export default function EncyclopediaPanel({ view }: { view: View }) {
       </article>
     );
   }
-  const processed = new Set(processedFieldKeys(detail?.task));
   const fields = (detail?.entry.fields || []).filter(function visible(field) {
     const result = detail?.task?.results[field.key];
     if (
@@ -508,12 +510,12 @@ export default function EncyclopediaPanel({ view }: { view: View }) {
         .includes(fieldSearch.toLowerCase())
     )
       return false;
-    if (filter === "empty") return field.writable && !hasFieldValue(field.value);
+    if (filter === "empty") return isTrackedField(field) && !(isProgramField(field) ? hasProgramResult(field.value) : hasFieldValue(field.value));
     if (filter === "review")
       return (
         result && ["tentative", "conflict", "blocked"].includes(result.outcome)
       );
-    if (filter === "unchecked") return field.writable && !processed.has(field.key);
+    if (filter === "unchecked") return isTrackedField(field) && !fieldIsProcessed(field, currentTask);
     return true;
   });
   const stats = currentTask ? taskProgress(currentTask) : null;
@@ -1038,7 +1040,7 @@ export default function EncyclopediaPanel({ view }: { view: View }) {
                   <strong>
                     {
                       detail.entry.fields.filter(function empty(field) {
-                        return field.writable && !hasFieldValue(field.value);
+                        return isTrackedField(field) && !(isProgramField(field) ? hasProgramResult(field.value) : hasFieldValue(field.value));
                       }).length
                     }
                   </strong>
@@ -1051,7 +1053,7 @@ export default function EncyclopediaPanel({ view }: { view: View }) {
               </div>
               <TaskProgress task={currentTask} counts={counts} />
               <p className="ep-control-note">
-                开始只处理未检查字段；重新开始会清零处理进度，保留现有内容。停止会中断并删除当前会话，已处理结果保留。查无资料也算已处理；只读或禁止采集字段不计入总数。
+                资料采集和程序计算字段都计入总进度；程序字段须有数据库结果才算完成。查无资料的核查记录保留为已处理，身份和暂停采集字段单独展示。开始继续未处理项，重新开始保留内容并重置资料核查进度。
               </p>
               {!!currentTask?.cleanupSessions.length && (
                 <p className="ep-notice">

@@ -48,10 +48,51 @@ function task(id) {
     cleanupSessions: [], cleanupError: "", model: "test", reasoning: "high", scope: ["fields.title", "fields.notes"],
     dictionaryHash: "test", skillHash: "test", startedAt: "2026-01-01", updatedAt: "2026-01-01",
     nextRetryAt: null, message: "Done", unconfirmed: 0,
-    results: { "fields.title": { field: "fields.title", readback: true, outcome: "verified", value: "Title",
+    results: { "fields.title": { field: "fields.title", readback: true, outcome: "verified", value: "Title " + id,
       changed: false, evidence: [{ snapshot: "sensitive-evidence".repeat(10000) }], candidates: [], reason: "", nextCondition: "" } },
   };
 }
+
+test('program fields are tracked and database writes realign completed tasks and list filters', function(t) {
+  const config=fixture(t);
+  const db=new DatabaseSync(config.database);
+  db.exec("ALTER TABLE wiki_type_book ADD COLUMN score REAL; INSERT INTO wiki_column_fields VALUES('book','score','score','fields','system',2)");
+  const store=new TaskStore(config);
+  const current=task(1);
+  current.processedFields=['fields.title','fields.notes'];
+  current.results['fields.title'].value='Title 1';
+  current.results['fields.notes']={...current.results['fields.title'],field:'fields.notes',value:null,outcome:'not_applicable'};
+  current.cleanupSessions=['old-session-awaiting-deletion'];
+  store.save(current);
+  const builder=new ViewBuilder(config);
+  config.cleanup.push(function close(){builder.close();store.close();db.close();});
+  builder.sync();
+  const views=new PageViews(config);
+  assert.deepEqual(views.entry(1).progress,{filled:1,checked:2,total:3,percent:66});
+  assert.deepEqual(views.entries('book','',1,'completed',true).ids,[]);
+  assert.deepEqual(views.entries('book','',1,'partial',true).ids,[1]);
+  assert.equal(store.get(1).phase,'stopped');
+  assert.equal(store.get(1).desired,'stopped');
+  assert.deepEqual(store.get(1).cleanupSessions,['old-session-awaiting-deletion']);
+  const external=new DatabaseSync(path.join(config.workspace,'panel/state.sqlite'));
+  external.exec("UPDATE tasks SET body=json_set(body,'$.phase','completed') WHERE entity_id=1");
+  external.close();
+  builder.sync();
+  assert.equal(store.get(1).phase,'stopped','a task-file update must be checked against current database fields');
+  db.exec('UPDATE wiki_type_book SET score=0 WHERE entity_id=1');
+  builder.sync();
+  assert.equal(views.entry(1).progress.percent,100);
+  assert.equal(store.get(1).computedFields['fields.score'],true);
+  assert.equal(store.get(1).phase,'completed');
+  assert.deepEqual(views.entries('book','',1,'completed',true).ids,[1]);
+  db.exec("UPDATE wiki_type_book SET title='Externally changed',score=NULL WHERE entity_id=1");
+  builder.sync();
+  assert.equal(store.get(1).phase,'stopped');
+  assert.deepEqual(store.get(1).processedFields,['fields.notes']);
+  assert.deepEqual(views.entry(1).progress,{filled:1,checked:1,total:3,percent:33});
+  builder.sync();
+  assert.equal(builder.sync().changed,0);
+});
 
 test("concurrency settings update projections even with no task or source changes", function(t) {
   const config = fixture(t);
@@ -84,7 +125,8 @@ test("overview, paging and select-all use files even with both databases unavail
   assert.equal(views.home().categories[0].total, 260);
   assert.equal(views.entries("book", "", 2).entries[0].id, 31);
   assert.equal(views.entries("book", "", 1, "all", true).ids.length, 260);
-  assert.deepEqual(views.entries("book", "", 1, "completed", true).ids, [1]);
+  assert.deepEqual(views.entries("book", "", 1, "completed", true).ids, []);
+  assert.deepEqual(views.entries("book", "", 1, "partial", true).ids, [1]);
   assert.equal(views.entries("book", "", 1, "never", true).total, 259);
   assert.equal(views.entries("book", "TITLE_1", 1, "all", true).total, 111);
   assert.equal(views.entries("book", "%", 1, "all", true).total, 0);
@@ -312,7 +354,7 @@ test("old projection formats rebuild completion sort keys without changing defau
   builder = new ViewBuilder(config);
   assert.equal(builder.sync().rebuilt, true);
   builder.close();
-  assert.equal(views.manifest().format, 3);
+  assert.equal(views.manifest().format, 4);
   assert.equal(views.read("catalog/book.json")[0].completion, 0);
   assert.equal(views.entries("book").entries[0].id, 1);
 });

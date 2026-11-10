@@ -2,18 +2,19 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { StatementSync } from "node:sqlite";
-import { categories, hasFieldValue, taskFilterGroup } from "../../types/encyclopedia.ts";
-import type { Json } from "../../types/encyclopedia.ts";
+import { categories, hasFieldValue, hasProgramResult, taskFilterGroup } from "../../types/encyclopedia.ts";
+import type { FieldDefinition, Json } from "../../types/encyclopedia.ts";
 import { completionRatio } from "../../types/entry-sort.ts";
-import { identifier, openDatabase } from "./database.ts";
+import { hash, identifier, openDatabase } from "./database.ts";
 import type { EncyclopediaPaths } from "./config.ts";
+import { panelDirectory } from "./config.ts";
 import { TaskStore } from "./store.ts";
 import { displayTask } from "./task-summary.ts";
 import { atomicJson, entryBucket, PageViews, viewsDirectory } from "./page-views.ts";
 import type { ViewIndexItem, ViewManifest, ViewRecord } from "./page-views.ts";
 
-interface Definition { column_name: string; field_key: string; storage: string; collection_mode: string; }
-interface FieldReader { definitions: Definition[]; statement: StatementSync | null; }
+interface Definition extends Record<string, unknown> { column_name: string; field_key: string; storage: string; collection_mode: string; }
+interface FieldReader { definitions: Definition[]; dictionaryHash: string; statement: StatementSync | null; }
 
 export class ViewBuilder {
   private config: EncyclopediaPaths;
@@ -28,14 +29,15 @@ export class ViewBuilder {
   private dirtyCategories = new Set<string>();
   private running = new Set<number>();
   private identity: string;
+  private stateIdentity: string;
 
   constructor(config: EncyclopediaPaths) {
     this.config = config;
     this.db = openDatabase(config, false);
     this.store = new TaskStore(config);
     this.views = new PageViews(config);
-    const stat = fs.statSync(config.database);
-    this.identity = stat.dev + ":" + stat.ino + ":" + stat.birthtimeMs;
+    this.identity = this.fileIdentity(config.database);
+    this.stateIdentity = this.fileIdentity(path.join(panelDirectory(config), "state.sqlite"));
     this.installTracking();
     try { this.manifest = this.views.manifest(); } catch { /* First build. */ }
     for (const category of categories) {
@@ -52,6 +54,10 @@ export class ViewBuilder {
         for (const task of tasks) if (task.active) this.running.add(task.id);
       } catch { this.manifest = null; }
     }
+  }
+  private fileIdentity(file: string) {
+    const stat = fs.statSync(file);
+    return stat.dev + ":" + stat.ino + ":" + stat.birthtimeMs;
   }
   private installTracking() {
     this.db.exec("CREATE TABLE IF NOT EXISTS panel_view_changes(seq INTEGER PRIMARY KEY AUTOINCREMENT,entity_id INTEGER NOT NULL)");
@@ -91,14 +97,14 @@ export class ViewBuilder {
   private fieldReader(type: string): FieldReader {
     const cached = this.fields.get(type);
     if (cached) return cached;
-    const definitions = this.db.prepare("SELECT column_name,field_key,storage,collection_mode FROM wiki_column_fields WHERE type_key=? ORDER BY storage,ordinal,field_key")
-      .all(type).filter(function writable(row) {
+    const allDefinitions = this.db.prepare("SELECT * FROM wiki_column_fields WHERE type_key=? ORDER BY storage,ordinal,field_key").all(type);
+    const definitions = allDefinitions.filter(function tracked(row) {
         return row.storage !== "identity" && !["name", "entity_id"].includes(String(row.field_key)) &&
-          !["system", "identity_review", "paused"].includes(String(row.collection_mode));
+          !["identity_review", "paused"].includes(String(row.collection_mode));
       }) as unknown as Definition[];
     const columns = [...new Set(definitions.map(function column(field) { return identifier(field.column_name); }))];
     const statement = columns.length ? this.db.prepare("SELECT " + columns.join(",") + " FROM " + identifier("wiki_type_" + type) + " WHERE entity_id=?") : null;
-    const reader = { definitions, statement };
+    const reader = { definitions, statement, dictionaryHash: hash(JSON.stringify(allDefinitions)) };
     this.fields.set(type, reader);
     return reader;
   }
@@ -114,23 +120,34 @@ export class ViewBuilder {
     }));
     let filled = 0;
     const fieldKeys: string[] = [];
+    const fields: FieldDefinition[] = [];
+    const computedFields: Record<string, boolean> = {};
     for (const field of reader.definitions) {
       let value = values[field.column_name] ?? null;
       const type = types.get(field.column_name);
       if (typeof value === "string" && type && type !== "text") value = JSON.parse(value);
-      if (hasFieldValue(value as Json)) filled++;
-      fieldKeys.push(field.storage + "." + field.field_key);
+      const key = field.storage + "." + field.field_key;
+      const program = field.collection_mode === "system";
+      if (program) computedFields[key] = hasProgramResult(value as Json);
+      if (program ? hasProgramResult(value as Json) : hasFieldValue(value as Json)) filled++;
+      fieldKeys.push(key);
+      fields.push({key, value: value as Json, writable: !program, storage: field.storage,
+        fieldKey: field.field_key, column: field.column_name, table: "wiki_type_" + row.type_key,
+        label: String(field.label || field.field_key), group: String(field.group_name || ""),
+        description: String(field.description || ""), valueType: field.value_type ? String(field.value_type) : null,
+        rules: field as Record<string, Json>});
     }
-    return { fieldKeys, entry: {
+    if (this.store.getSummary(id)) this.store.alignWithDatabase(id, {fields, dictionaryHash: reader.dictionaryHash});
+    return { fieldKeys, computedFields, entry: {
       id, name: String(row.name), nameEn: String(row.name_en || ""), type: String(row.type_key),
       typeName: String(row.type_name), state: String(row.state), version: Number(row.version),
       progress: { filled, checked: 0, total: fieldKeys.length, percent: 0 },
     } };
   }
-  private update(id: number, sourceChanged: boolean) {
+  private update(id: number) {
     const bucket = this.bucket(id);
-    let record: ViewRecord | null = sourceChanged ? this.sourceEntry(id) : bucket[String(id)] || null;
-    if (!record && !sourceChanged) record = this.sourceEntry(id);
+    // Task-file changes also require current database values, not only old cached counters.
+    const record = this.sourceEntry(id);
     this.running.delete(id);
     if (!record) {
       for (const [key, index] of this.indexes) {
@@ -143,18 +160,23 @@ export class ViewBuilder {
     const task = this.store.getSummary(id);
     const progress = record.entry.progress!;
     const confirmed = new Set(task?.processedFields || []);
-    progress.checked = record.fieldKeys.filter(function checked(key) { return confirmed.has(key); }).length;
+    progress.checked = record.fieldKeys.filter(function checked(key) {
+      if (Object.hasOwn(record.computedFields || {}, key)) return record.computedFields![key];
+      return confirmed.has(key);
+    }).length;
     progress.percent = progress.total ? Math.floor(progress.checked * 100 / progress.total) : 0;
     if (task) {
       const display = displayTask(task);
+      display.computedFields = record.computedFields;
       display.displayProgress = { ...task.displayProgress!, ...progress };
+      if (display.phase === "completed" && progress.checked < progress.total) display.phase = "stopped";
       record.entry.task = display;
       if (taskFilterGroup(display) === "running") this.running.add(id);
     } else delete record.entry.task;
     const entry = record.entry;
     Object.assign(entry, { viewRevision: randomUUID() });
     const category = this.category(entry.type)!;
-    const item = { id, name: entry.name, nameEn: entry.nameEn, state: entry.state, group: taskFilterGroup(task), completion: completionRatio(progress) };
+    const item = { id, name: entry.name, nameEn: entry.nameEn, state: entry.state, group: taskFilterGroup(entry.task), completion: completionRatio(progress) };
     for (const [key, index] of this.indexes) {
       if (key !== category && index.delete(id)) this.dirtyCategories.add(key);
     }
@@ -167,6 +189,21 @@ export class ViewBuilder {
     this.dirtyBuckets.add(entryBucket(id));
   }
   sync(force = false) {
+    const identity = this.fileIdentity(this.config.database);
+    if (identity !== this.identity) {
+      this.db.close();
+      this.db = openDatabase(this.config, false);
+      this.identity = identity;
+      this.installTracking();
+      force = true;
+    }
+    const stateIdentity = this.fileIdentity(path.join(panelDirectory(this.config), "state.sqlite"));
+    if (stateIdentity !== this.stateIdentity) {
+      this.store.close();
+      this.store = new TaskStore(this.config);
+      this.stateIdentity = stateIdentity;
+      force = true;
+    }
     let schema = this.schemaVersion();
     if (this.manifest && schema !== this.manifest.schemaVersion) {
       this.installTracking();
@@ -176,14 +213,13 @@ export class ViewBuilder {
     const taskChanges = this.store.changes(this.manifest?.taskSequence || 0);
     // Capture the journal boundary first. External writes after this point are replayed next time.
     this.store.refreshChangedSummaries();
-    const rebuild = force || !this.manifest || this.manifest.format !== 3 || this.manifest.databaseIdentity !== this.identity ||
+    const rebuild = force || !this.manifest || this.manifest.format !== 4 || this.manifest.databaseIdentity !== this.identity ||
       schema !== this.manifest.schemaVersion || mainChanges.some(function global(row) { return Number(row.entity_id) === 0; });
     const concurrency = this.store.getConcurrency();
     const settingsChanged = !this.manifest || this.views.home().concurrency !== concurrency;
     if (!rebuild && !mainChanges.length && !taskChanges.length && !settingsChanged) return { changed: 0, rebuilt: false };
     const mainSequence = Number(mainChanges.at(-1)?.seq || this.manifest?.mainSequence || 0);
     const taskSequence = Number(taskChanges.at(-1)?.seq || this.manifest?.taskSequence || 0);
-    const sourceIds = new Set<number>();
     const ids = new Set<number>();
     if (rebuild) {
       this.fields.clear();
@@ -191,11 +227,11 @@ export class ViewBuilder {
       for (const row of this.db.prepare("SELECT entity_id FROM wiki_entry_profiles ORDER BY entity_id").all()) ids.add(Number(row.entity_id));
       for (const category of categories) this.dirtyCategories.add(category.key);
     } else {
-      for (const row of mainChanges) { ids.add(Number(row.entity_id)); sourceIds.add(Number(row.entity_id)); }
+      for (const row of mainChanges) ids.add(Number(row.entity_id));
       for (const row of taskChanges) ids.add(Number(row.entity_id));
     }
     // Publish data first, then the manifest; unacknowledged journal rows survive a crash.
-    for (const id of ids) this.update(id, rebuild || sourceIds.has(id));
+    for (const id of ids) this.update(id);
     const directory = viewsDirectory(this.config);
     for (const name of this.dirtyBuckets) atomicJson(path.join(directory, name), this.buckets.get(name));
     for (const key of this.dirtyCategories) {
@@ -216,7 +252,7 @@ export class ViewBuilder {
       return false;
     });
     this.writeSmall("task-index.json", taskIndex);
-    const manifest: ViewManifest = { format: 3, revision: randomUUID(), mainSequence, taskSequence, schemaVersion: schema, databaseIdentity: this.identity, updatedAt: new Date().toISOString() };
+    const manifest: ViewManifest = { format: 4, revision: randomUUID(), mainSequence, taskSequence, schemaVersion: schema, databaseIdentity: this.identity, updatedAt: new Date().toISOString() };
     atomicJson(path.join(directory, "manifest.json"), manifest);
     this.manifest = manifest;
     this.db.prepare("DELETE FROM panel_view_changes WHERE seq<=?").run(mainSequence);

@@ -22,6 +22,7 @@ export interface ViewIndexItem {
 export interface ViewRecord {
   entry: EntrySummary;
   fieldKeys: string[];
+  computedFields?: Record<string, boolean>;
 }
 export interface ViewManifest {
   format: number;
