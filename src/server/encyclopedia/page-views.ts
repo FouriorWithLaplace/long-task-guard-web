@@ -158,7 +158,7 @@ export class PageViews {
         filteredActiveCount,
         page: 1,
         pages,
-        concurrency: 2,
+        concurrency: this.home().concurrency,
         ids: matches.map(function id(item) { return item.id; }),
       };
     }
@@ -167,7 +167,7 @@ export class PageViews {
       const task = this.entry(item.id)?.task;
       if (task) tasks.push(sort === "execution" ? { ...task, displayQueue: queueDisplays.get(item.id) } : task);
     }
-    return { tasks, total: matches.length, totalTasks, filteredActiveCount, page, pages, concurrency: 2 };
+    return { tasks, total: matches.length, totalTasks, filteredActiveCount, page, pages, concurrency: this.home().concurrency };
   }
   entry(id: number): EntrySummary | null {
     const records = this.read<Record<string, ViewRecord>>(entryBucket(id));

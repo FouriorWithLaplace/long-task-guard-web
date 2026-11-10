@@ -53,6 +53,24 @@ function task(id) {
   };
 }
 
+test("concurrency settings update projections even with no task or source changes", function(t) {
+  const config = fixture(t);
+  const builder = new ViewBuilder(config);
+  config.cleanup.push(function close() { builder.close(); });
+  builder.sync();
+  const views = new PageViews(config);
+  assert.equal(views.home().concurrency, 2);
+  const revision = views.manifest().revision;
+  const store = new TaskStore(config);
+  store.setConcurrency(8);
+  store.close();
+  assert.equal(builder.sync().changed, 0);
+  assert.notEqual(views.manifest().revision, revision);
+  assert.equal(views.home().concurrency, 8);
+  assert.equal(views.tasks(false).concurrency, 8);
+  assert.equal(views.tasks(false, 1, true).concurrency, 8);
+});
+
 test("overview, paging and select-all use files even with both databases unavailable", function(t) {
   const config = fixture(t);
   const store = new TaskStore(config);

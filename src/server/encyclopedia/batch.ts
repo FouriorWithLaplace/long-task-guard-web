@@ -7,7 +7,7 @@ import type { EncyclopediaManager } from "./manager.ts";
 import { taskProgress } from "../../types/encyclopedia.ts";
 import { completionRatio } from "../../types/entry-sort.ts";
 
-export function parseBatchIds(value: unknown, limit = 50): number[] {
+export function parseBatchIds(value: unknown, limit = 50000): number[] {
   if (!Array.isArray(value) || !value.length || value.length > limit || value.some(function invalid(id) {
     return !Number.isSafeInteger(id) || id <= 0;
   })) throw new Error("每批需要 1 至 " + limit + " 个有效词条 ID。");
@@ -75,43 +75,47 @@ export async function batchOperate(
     task: EntryTask | null,
   ) => Promise<{ model: string; reasoning: string }>,
 ): Promise<BatchItemResult[]> {
-  async function operate(id: number): Promise<BatchItemResult> {
+  const results = new Map<number, BatchItemResult>();
+  const settingsById = new Map<number, { model: string; reasoning: string }>();
+  // 先解析轻量设置，事务内不等待网络，也不启动实际采集。
+  for (const id of ids) {
+    if (action === "stop") continue;
     try {
-      let task = manager.store?.getSummary(id) ?? manager.get(id);
-      let reason = skipReason(task, action);
-      if (reason) return { id, status: "skipped", reason };
-      if (action !== "stop") {
+      const task = manager.store?.getSummary(id) ?? manager.get(id);
+      const reason = skipReason(task, action);
+      if (reason) results.set(id, { id, status: "skipped", reason });
+      else {
         assertCurrentTaskProtocol(manager);
-        const settings = await modelFor(task);
-        // 模型读取期间，单条按钮可能已经改变任务状态。
-        task = manager.store?.getSummary(id) ?? manager.get(id);
-        reason = skipReason(task, action);
-        if (reason) return { id, status: "skipped", reason };
-        if (action === "configure") {
-          if (typeof manager.configure !== "function") throw new Error("请重启后台服务以使用模型切换功能。");
-          task = manager.configure(id, settings.model, settings.reasoning);
-        } else task = manager.start(id, settings.model, settings.reasoning, action);
-      } else task = await manager.stop(id);
-      if (action !== "configure" && (task?.unconfirmed || task?.phase === "blocked"))
-        throw new Error(task.message);
-      if (action === "stop" && task?.cleanupError)
-        throw new Error("已停止，但会话清理待重试：" + task.cleanupError);
-      return { id, status: "success", reason: task?.message || "操作完成。" };
+        settingsById.set(id, await modelFor(task));
+      }
     } catch (error) {
-      return {
-        id,
-        status: "failed",
-        reason: error instanceof Error ? error.message : String(error),
-      };
+      results.set(id, { id, status: "failed", reason: error instanceof Error ? error.message : String(error) });
     }
   }
-  if (action === "continue") {
-    // 逐项入队，防止模型查询的返回顺序让低完成度任务抢先启动。
-    // 执行仍由管理器保持并发 2，不等待单个采集任务结束。
-    const results = new Map<number, BatchItemResult>();
-    for (const id of orderBatchIds(manager, ids)) results.set(id, await operate(id));
-    return ids.map(function result(id) { return results.get(id)!; });
+  const ordered = action === "continue" ? orderBatchIds(manager, ids) : ids;
+  function apply() {
+    for (const id of ordered) {
+      if (results.has(id)) continue;
+      try {
+        let task = manager.store?.getSummary(id) ?? manager.get(id);
+        const reason = skipReason(task, action);
+        if (reason) {
+          results.set(id, { id, status: "skipped", reason });
+          continue;
+        }
+        if (action === "stop") task = manager.requestStop(id);
+        else {
+          const settings = settingsById.get(id)!;
+          if (action === "configure") task = manager.configure(id, settings.model, settings.reasoning);
+          else task = manager.start(id, settings.model, settings.reasoning, action);
+        }
+        results.set(id, { id, status: "success", reason: task?.message || "操作已接受。" });
+      } catch (error) {
+        results.set(id, { id, status: "failed", reason: error instanceof Error ? error.message : String(error) });
+      }
+    }
   }
-  // 停止和设置等操作不需要等待前一项。
-  return Promise.all(ids.map(operate));
+  if (manager.applyBatch) manager.applyBatch(apply);
+  else apply();
+  return ids.map(function result(id) { return results.get(id)!; });
 }

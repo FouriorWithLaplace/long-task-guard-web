@@ -2,23 +2,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { paths, panelDirectory } from "../src/server/encyclopedia/config.ts";
 import { ViewBuilder } from "../src/server/encyclopedia/view-builder.ts";
+import { acquireProcessLock } from "./process-lock.mjs";
 
 const directory = panelDirectory(paths);
 fs.mkdirSync(directory, { recursive: true });
 const lockFile = path.join(directory, "page-views.lock");
-function takeLock() {
-  try { fs.writeFileSync(lockFile, String(process.pid), { flag: "wx" }); }
-  catch (error) {
-    if (error.code !== "EEXIST") throw error;
-    const owner = Number(fs.readFileSync(lockFile, "utf8"));
-    let alive = true;
-    try { process.kill(owner, 0); } catch (failure) { if (failure.code === "ESRCH") alive = false; }
-    if (alive) throw new Error("页面更新器已在运行（PID " + owner + "）。请先停止网站，再重建页面数据。");
-    fs.unlinkSync(lockFile);
-    fs.writeFileSync(lockFile, String(process.pid), { flag: "wx" });
-  }
-}
-takeLock();
+const releaseLock = acquireProcessLock(lockFile);
 let builder;
 let timer;
 let interval;
@@ -29,7 +18,7 @@ function close() {
   for (const watcher of watchers) watcher.close();
   builder?.close();
   builder = null;
-  if (fs.existsSync(lockFile) && fs.readFileSync(lockFile, "utf8") === String(process.pid)) fs.unlinkSync(lockFile);
+  releaseLock();
 }
 function shutdown() { close(); process.exit(0); }
 process.once("SIGINT", shutdown);

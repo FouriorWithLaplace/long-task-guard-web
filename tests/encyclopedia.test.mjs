@@ -19,7 +19,7 @@ import {
 } from "../src/server/encyclopedia/writer.ts";
 import { EncyclopediaManager } from "../src/server/encyclopedia/manager.ts";
 import { assertCurrentTaskProtocol, batchOperate, orderBatchIds, parseBatch, parseBatchIds } from "../src/server/encyclopedia/batch.ts";
-import { resolveTaskModel } from "../src/server/encyclopedia/model-settings.ts";
+import { queuedTaskModel, resolveTaskModel } from "../src/server/encyclopedia/model-settings.ts";
 import { fieldProgress, taskProgress, hasFieldValue, processedFieldKeys, taskFilterGroup, taskFilters } from "../src/types/encyclopedia.ts";
 
 test("legacy task snapshots render confirmed progress without restoring explicitly reset progress", function () {
@@ -885,7 +885,7 @@ test("batch validation deduplicates IDs and rejects malformed or oversized reque
     { action: "pause", ids: [1] },
     { action: "stop", ids: [] },
     { action: "stop", ids: ["1"] },
-    { action: "stop", ids: Array(51).fill(1) },
+    { action: "stop", ids: Array(50001).fill(1) },
   ])
     assert.throws(() => parseBatch(body));
 });
@@ -910,6 +910,7 @@ test("batch continues eligible entries, skips completed entries, isolates failur
   assert.equal(clients.length, 2);
   assert.equal(manager.get(3).phase, "queued");
   await batchOperate(manager, "stop", [1, 2, 3], modelFor);
+  await settle();
   assert.equal(manager.get(3).phase, "stopped");
   const completed = manager.get(3);
   completed.phase = "completed";
@@ -923,6 +924,7 @@ test("batch continues eligible entries, skips completed entries, isolates failur
   );
   assert.equal(manager.get(3).runId, completed.runId);
   await batchOperate(manager, "stop", [1, 2], modelFor);
+  await settle();
   const skip = await batchOperate(manager, "stop", [1, 2, 9000], modelFor);
   assert.ok(skip.every((result) => result.status === "skipped"));
 });
@@ -1062,7 +1064,174 @@ test("dictionary changes and excluded entries cannot be silently written", funct
   assert.throws(() => writer.submit(task, proposal()), /规则已变化/);
 });
 
+test("batch enqueue and queued stop do no detailed preparation or Codex work", async function (t) {
+  const config = fixture();
+  const { manager, clients } = runner(t, config);
+  manager.setConcurrency(1);
+  const recovered = [];
+  const recover = manager.writer.recover.bind(manager.writer);
+  manager.writer.recover = function track(task) {
+    recovered.push(task.entityId);
+    return recover(task);
+  };
+  const result = await batchOperate(manager, "continue", [1, 2, 3], async function settings() {
+    return queuedTaskModel({ model: "test", reasoning: "high" });
+  });
+  assert.ok(result.every(function accepted(item) { return item.status === "success"; }));
+  assert.deepEqual(recovered, []);
+  assert.equal(clients.length, 0);
+  assert.equal(fs.existsSync(path.join(config.workspace, "panel/rules")), false);
+  assert.equal(fs.existsSync(path.join(config.workspace, "tmp")), false);
+  await settle();
+  assert.equal(clients.length, 1);
+  assert.ok(recovered.every(function firstOnly(id) { return id === 1; }));
+  for (const id of [2, 3]) {
+    assert.equal(manager.get(id).skillHash, "");
+    assert.equal(manager.get(id).dictionaryHash, "");
+    assert.deepEqual(manager.get(id).scope, []);
+  }
+  const before = recovered.length;
+  manager.requestStop(2);
+  assert.equal(manager.get(2).phase, "stopped");
+  assert.equal(recovered.length, before);
+  await manager.stop(1);
+  await settle();
+  assert.equal(manager.get(3).phase, "running");
+  assert.equal(recovered.includes(2), false);
+});
+
+test("batch stop accepts every intent before slow interruption and never starts the selected queue", async function (t) {
+  let release;
+  const interruption = new Promise(function wait(resolve) { release = resolve; });
+  const { manager, clients, calls } = runner(t, fixture(), { interruption });
+  for (const id of [1, 2, 3]) manager.start(id, "test", "high");
+  await settle();
+  const results = await batchOperate(manager, "stop", [1, 2, 3], async function unused() {
+    assert.fail("Stopping must not read model settings");
+  });
+  assert.ok(results.every(function accepted(item) { return item.status === "success"; }));
+  for (const id of [1, 2, 3]) assert.equal(manager.get(id).desired, "stopped");
+  assert.equal(manager.get(1).phase, "stopping");
+  assert.equal(manager.get(3).phase, "stopped");
+  clients[0].tool("submit_field", proposal());
+  assert.ok(calls.some(function rejected(call) { return call.method === "reject"; }));
+  await settle();
+  assert.equal(manager.get(1).phase, "stopping");
+  assert.equal(clients.length, 2);
+  release();
+  await settle();
+  for (const id of [1, 2, 3]) assert.equal(manager.get(id).phase, "stopped");
+  assert.equal(clients.length, 2);
+});
+
+test("concurrency grows immediately, shrinks without interruption, and persists across restart", async function (t) {
+  const config = fixture();
+  const { manager, clients, calls } = runner(t, config);
+  for (const invalid of [0, -1, 1.5, NaN, Infinity, "3", null, Number.MAX_SAFE_INTEGER + 1])
+    assert.throws(function reject() { manager.setConcurrency(invalid); }, /整数/);
+  for (const id of [1, 2, 3]) manager.start(id, "test", "high");
+  await settle();
+  manager.setConcurrency(1);
+  await settle();
+  assert.equal(clients.length, 2);
+  assert.equal(calls.some(function interrupted(call) { return call.method === "turn/interrupt"; }), false);
+  await manager.stop(1);
+  await settle();
+  assert.equal(manager.get(3).phase, "queued");
+  await manager.stop(2);
+  await settle();
+  assert.equal(manager.get(3).phase, "running");
+  manager.start(1, "test", "high");
+  manager.start(2, "test", "high");
+  await settle();
+  assert.equal(manager.get(1).phase, "queued");
+  manager.setConcurrency(3);
+  await settle();
+  for (const id of [1, 2, 3]) assert.equal(manager.get(id).phase, "running");
+  manager.dispose();
+  const restored = runner(t, config);
+  assert.equal(restored.manager.concurrency, 3);
+  await settle();
+  for (const id of [1, 2, 3]) assert.equal(restored.manager.get(id).phase, "running");
+});
+
+test("rolled back batch does not leave tasks or launch deferred connections", async function (t) {
+  const { manager, clients } = runner(t, fixture());
+  assert.throws(function failedBatch() {
+    manager.applyBatch(function write() {
+      manager.start(1, "test", "high");
+      manager.start(2, "test", "high");
+      throw new Error("Simulated commit failure");
+    });
+  }, /Simulated/);
+  await settle();
+  assert.equal(manager.get(1), null);
+  assert.equal(manager.store.getSummary(2), null);
+  assert.equal(clients.length, 0);
+});
+
+test("one thousand queued tasks can be accepted and stopped before any detailed preparation", async function (t) {
+  const config = fixture();
+  const db = open(config);
+  db.exec("BEGIN");
+  for (let id = 4; id <= 1000; id++) {
+    db.prepare("INSERT INTO entities(id,name) VALUES(?,?)").run(id, "Queued book " + id);
+    db.prepare("INSERT INTO wiki_entry_profiles(entity_id,type_key,state,version) VALUES(?,'book','pending',1)").run(id);
+  }
+  db.exec("COMMIT");
+  db.close();
+  const { manager, clients } = runner(t, config);
+  manager.writer.recover = function forbidden() { assert.fail("Queued tasks must not read full content"); };
+  const ids = Array.from({ length: 1000 }, function id(_, index) { return index + 1; });
+  async function settings() { return { model: "test", reasoning: "high" }; }
+  const startTime = performance.now();
+  const started = await batchOperate(manager, "continue", ids, settings);
+  const startElapsed = performance.now() - startTime;
+  const stopTime = performance.now();
+  const stopped = await batchOperate(manager, "stop", ids, settings);
+  const stopElapsed = performance.now() - stopTime;
+  assert.ok(started.every(function accepted(item) { return item.status === "success"; }));
+  assert.ok(stopped.every(function accepted(item) { return item.status === "success"; }));
+  await settle();
+  assert.equal(clients.length, 0);
+  assert.equal(manager.store.listSummaries(true).length, 0);
+  t.diagnostic("1000 tasks: enqueue " + Math.round(startElapsed) + " ms; stop " + Math.round(stopElapsed) + " ms (isolated database, no Codex)");
+});
+
+test("queue model settings validate shape without fetching a catalog", function () {
+  assert.deepEqual(queuedTaskModel({}, { model: "saved", reasoning: "high" }), { model: "saved", reasoning: "high" });
+  assert.deepEqual(queuedTaskModel({ model: "new" }, { model: "saved", reasoning: "high" }), { model: "new", reasoning: "medium" });
+  for (const model of ["", " ", 2, null, "x".repeat(201)])
+    assert.throws(function invalid() { queuedTaskModel({ model }); });
+});
+
+test("HTTP settings and batch routes persist intentions without initializing Codex", async function (t) {
+  const { manager, clients } = runner(t, fixture());
+  const previous = globalThis.encyclopediaService;
+  globalThis.encyclopediaService = { manager };
+  t.after(function restoreService() { globalThis.encyclopediaService = previous; });
+  const { encyclopediaRequest } = await import("../src/server/encyclopedia/http.ts");
+  function request(segment, body) {
+    const options = body === undefined ? {} : {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    };
+    return encyclopediaRequest(new Request("http://localhost/api/encyclopedia/" + segment, options), [segment]);
+  }
+  assert.deepEqual(await (await request("settings")).json(), { concurrency: 2 });
+  assert.equal((await request("settings", { concurrency: 0 })).status, 400);
+  assert.deepEqual(await (await request("settings", { concurrency: 4 })).json(), { concurrency: 4 });
+  const response = await request("batch", { action: "continue", ids: [1, 2, 3], model: "test", reasoning: "high" });
+  assert.equal(response.status, 200);
+  assert.ok((await response.json()).results.every(function accepted(item) { return item.status === "success"; }));
+  assert.equal(clients.length, 0);
+  assert.equal((await request("batch", { action: "stop", ids: [1, 2, 3] })).status, 200);
+  await settle();
+  assert.equal(clients.length, 0);
+  for (const id of [1, 2, 3]) assert.equal(manager.get(id).phase, "stopped");
+});
+
 async function settle() {
+  await new Promise(function nextLoop(resolve) { setImmediate(resolve); });
   for (let i = 0; i < 40; i++) await Promise.resolve();
 }
 function runner(t, config, options = {}) {

@@ -269,6 +269,18 @@ export function originalPath(config: EncyclopediaPaths, relative: string) {
     throw new Error("原件路径越界。");
   return candidate;
 }
+// 入队只读取身份和可用状态；字段、证据和原件等到实际执行时再读取。
+export function readEntrySummary(config: EncyclopediaPaths, id: number, existing?: DatabaseSync): EntrySummary {
+  const db = existing || openDatabase(config);
+  try {
+    const row = db.prepare(entrySelect + " WHERE e.id=? AND e.deleted_at IS NULL").get(id);
+    if (!row) throw Object.assign(new Error("词条不存在或已经删除。"), { code: "ENTRY_NOT_FOUND" });
+    return summary(row);
+  } finally {
+    if (!existing) db.close();
+  }
+}
+
 export function readDetail(
   config: EncyclopediaPaths,
   id: number,

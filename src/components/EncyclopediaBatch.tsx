@@ -79,51 +79,24 @@ export default function EncyclopediaBatch(props: Props) {
     lock(true);
     setResults([]);
     setResultPage(0);
-    let ids = [...props.selected].sort(function ascending(a, b) {
+    const ids = [...props.selected].sort(function ascending(a, b) {
       return a - b;
     });
     const collected: BatchItemResult[] = [];
     try {
-      if (action === "continue") {
-        setMessage("正在按完成度从高到低安排所选任务…");
-        const response = await fetch("/api/encyclopedia/batch/order", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ids }),
-        });
-        const body = await response.json();
-        if (!response.ok) throw new Error(body.error || "无法确定任务执行顺序。");
-        const ordered = body.ids;
-        const requested = new Set(ids);
-        if (!Array.isArray(ordered) || ordered.length !== ids.length || new Set(ordered).size !== ids.length ||
-          ordered.some(function unexpected(id: number) { return !requested.has(id); })) {
-          throw new Error("任务排序结果不完整，请重试。");
-        }
-        ids = ordered;
-      }
-      // 分批发送以保持页面可响应；每批服务端逐条报告结果。
-      for (let offset = 0; offset < ids.length; offset += 50) {
-        setMessage(
-          "正在处理 " +
-            Math.min(offset + 50, ids.length) +
-            " / " +
-            ids.length +
-            " 条，请保持页面打开。",
-        );
-        const chunk = ids.slice(offset, offset + 50);
-        const response = await fetch("/api/encyclopedia/batch", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action, ids: chunk, ...props.modelSelection }),
-        });
-        const body = await response.json();
-        if (!response.ok) throw new Error(body.error || "批量请求失败。");
-        const items = body.results as BatchItemResult[];
-        collected.push(...items);
-        setResults([...collected]);
-      }
+      setMessage("正在提交 " + ids.length + " 个任务的操作…");
+      const response = await fetch("/api/encyclopedia/batch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, ids, ...props.modelSelection }),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || "批量请求失败。");
+      const items = body.results as BatchItemResult[];
+      for (const item of items) collected.push(item);
+      setResults(collected);
       setMessage(
-        "批量操作已结束。成功表示操作已接受；采集仍按并发上限 2 执行。",
+        "批量操作已接受。排队任务按全局并发设置执行；正在停止的任务会在后台完成中断和清理。",
       );
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);

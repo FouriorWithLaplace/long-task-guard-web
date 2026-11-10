@@ -178,7 +178,9 @@ export class ViewBuilder {
     this.store.refreshChangedSummaries();
     const rebuild = force || !this.manifest || this.manifest.format !== 3 || this.manifest.databaseIdentity !== this.identity ||
       schema !== this.manifest.schemaVersion || mainChanges.some(function global(row) { return Number(row.entity_id) === 0; });
-    if (!rebuild && !mainChanges.length && !taskChanges.length) return { changed: 0, rebuilt: false };
+    const concurrency = this.store.getConcurrency();
+    const settingsChanged = !this.manifest || this.views.home().concurrency !== concurrency;
+    if (!rebuild && !mainChanges.length && !taskChanges.length && !settingsChanged) return { changed: 0, rebuilt: false };
     const mainSequence = Number(mainChanges.at(-1)?.seq || this.manifest?.mainSequence || 0);
     const taskSequence = Number(taskChanges.at(-1)?.seq || this.manifest?.taskSequence || 0);
     const sourceIds = new Set<number>();
@@ -207,7 +209,7 @@ export class ViewBuilder {
       for (const item of index.values()) if (item.state === "excluded") excluded++;
       return { ...category, total: index.size, excluded };
     });
-    this.writeSmall("home.json", { categories: categoryViews, workspace: this.config.workspace, concurrency: 2, activeCount: this.running.size });
+    this.writeSmall("home.json", { categories: categoryViews, workspace: this.config.workspace, concurrency, activeCount: this.running.size });
     // History is a separate file and is loaded only when the user opens that tab.
     const taskIndex = this.store.taskIndex().filter(function visible(task) {
       for (const index of indexes.values()) if (index.has(task.id)) return true;

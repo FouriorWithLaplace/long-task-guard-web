@@ -24,6 +24,7 @@ export interface WriteIntent {
 // 每词条只保留当前任务和最新字段结果；写入核对记录独立于会话。
 export class TaskStore {
   private db: DatabaseSync;
+  private transactionActive = false;
   constructor(config: EncyclopediaPaths) {
     const directory = panelDirectory(config);
     fs.mkdirSync(directory, { recursive: true });
@@ -34,6 +35,7 @@ export class TaskStore {
       CREATE TABLE IF NOT EXISTS intents(id TEXT PRIMARY KEY,entity_id INTEGER NOT NULL,status TEXT NOT NULL,body TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY,entity_id INTEGER NOT NULL,event TEXT NOT NULL,detail TEXT NOT NULL,created_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS service_lease(id INTEGER PRIMARY KEY CHECK(id=1),owner TEXT NOT NULL,expires_at INTEGER NOT NULL);`);
+    this.db.exec("CREATE TABLE IF NOT EXISTS panel_settings(key TEXT PRIMARY KEY,value INTEGER NOT NULL)");
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS intents_entity_status ON intents(entity_id,status);
       CREATE INDEX IF NOT EXISTS events_entity_id ON events(entity_id,id);
@@ -133,28 +135,61 @@ export class TaskStore {
     this.db.prepare("DELETE FROM tasks WHERE entity_id=?").run(id);
     this.db.prepare("DELETE FROM task_summaries WHERE entity_id=?").run(id);
   }
-  save(task: EntryTask, event?: string) {
-    delete task.displayProgress;
-    task.updatedAt = new Date().toISOString();
+  // 回调必须同步完成；批量写入只提交一次，不能跨 await 持有事务。
+  transaction<T>(operation: () => T): T {
+    if (this.transactionActive) {
+      // 单项失败只撤销这一项；整批仍由外层事务一次落盘。
+      this.db.exec("SAVEPOINT task_write");
+      try {
+        const result = operation();
+        this.db.exec("RELEASE task_write");
+        return result;
+      } catch (error) {
+        this.db.exec("ROLLBACK TO task_write; RELEASE task_write");
+        throw error;
+      }
+    }
     this.db.exec("BEGIN IMMEDIATE");
+    this.transactionActive = true;
     try {
-      this.db
-        .prepare(
-          "INSERT INTO tasks VALUES(?,?) ON CONFLICT(entity_id) DO UPDATE SET body=excluded.body",
-        )
-        .run(task.entityId, JSON.stringify(task));
-      this.writeSummary(task);
-      if (event)
-        this.db
-          .prepare(
-            "INSERT INTO events(entity_id,event,detail,created_at) VALUES(?,?,?,?)",
-          )
-          .run(task.entityId, event, task.message, task.updatedAt);
+      const result = operation();
       this.db.exec("COMMIT");
+      return result;
     } catch (error) {
       this.db.exec("ROLLBACK");
       throw error;
+    } finally {
+      this.transactionActive = false;
     }
+  }
+  getConcurrency(): number {
+    return Number(this.db.prepare("SELECT value FROM panel_settings WHERE key='concurrency'").get()?.value || 2);
+  }
+  setConcurrency(value: number) {
+    if (!Number.isSafeInteger(value) || value < 1) throw new Error("同时执行数量必须是大于 0 的整数。");
+    this.db.prepare("INSERT INTO panel_settings VALUES('concurrency',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(value);
+  }
+  hasPendingIntents(id: number): boolean {
+    return !!this.db.prepare("SELECT 1 FROM intents WHERE entity_id=? AND status IN ('prepared','conflict') LIMIT 1").get(id);
+  }
+  save(task: EntryTask, event?: string) {
+    delete task.displayProgress;
+    task.updatedAt = new Date().toISOString();
+    this.transaction(this.writeTask.bind(this, task, event));
+  }
+  private writeTask(task: EntryTask, event?: string) {
+    this.db
+      .prepare(
+        "INSERT INTO tasks VALUES(?,?) ON CONFLICT(entity_id) DO UPDATE SET body=excluded.body",
+      )
+      .run(task.entityId, JSON.stringify(task));
+    this.writeSummary(task);
+    if (event)
+      this.db
+        .prepare(
+          "INSERT INTO events(entity_id,event,detail,created_at) VALUES(?,?,?,?)",
+        )
+        .run(task.entityId, event, task.message, task.updatedAt);
   }
   // 取得服务租约后迁移；合并最新字段结果与删除快照在同一事务中完成。
   migrateTasks() {

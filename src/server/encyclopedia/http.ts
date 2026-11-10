@@ -4,7 +4,6 @@ import {
   guardResponseHeaders,
 } from "../guard-http.ts";
 import { terminalRequest } from "../guard-terminal-http.ts";
-import { readCachedModelCatalog } from "../model-catalog.ts";
 import {
   readCategoryFieldMarkdown,
   readDetail,
@@ -17,7 +16,7 @@ import {readEntryImage} from "./media.ts";
 import { viewRequest } from "./view-http.ts";
 import { displayTask } from "./task-summary.ts";
 import { readAllFieldMarkdown } from "./field-export.ts";
-import { resolveTaskModel } from "./model-settings.ts";
+import { queuedTaskModel } from "./model-settings.ts";
 
 function entityId(value: string | undefined) {
   if (
@@ -48,6 +47,14 @@ export async function encyclopediaRequest(
     }
     const service = getEncyclopediaService();
     const manager = service.manager;
+    if (segments.length === 1 && segments[0] === "settings") {
+      if (request.method === "GET")
+        return Response.json({ concurrency: manager.concurrency }, { headers: guardResponseHeaders });
+      if (request.method === "POST") {
+        const body = await request.json();
+        return Response.json(manager.setConcurrency(body?.concurrency), { headers: guardResponseHeaders });
+      }
+    }
     if (segments[0] === "export")
       return await exportRequest(request, segments, paths, function readStates() {
         return manager.store.phases();
@@ -108,18 +115,15 @@ export async function encyclopediaRequest(
       segments.length === 1
     ) {
       const raw = await request.text();
-      if (raw.length > 10000) throw new Error("请求过大。");
+      if (raw.length > 1000000) throw new Error("请求过大。");
       const body = JSON.parse(raw);
       const batch = parseBatch(body);
-      let catalogPromise: ReturnType<typeof readCachedModelCatalog> | undefined;
       const results = await batchOperate(
         manager,
         batch.action,
         batch.ids,
         async function modelFor(task) {
-          catalogPromise ??= readCachedModelCatalog();
-          const catalog = await catalogPromise;
-          return resolveTaskModel(catalog, body, task);
+          return queuedTaskModel(body, task);
         },
       );
       return Response.json({ results }, { headers: guardResponseHeaders });
@@ -134,7 +138,7 @@ export async function encyclopediaRequest(
       const body = await request.json();
       const id = entityId(segments[1]);
       if (body.action === "stop") {
-        await manager.stop(id);
+        manager.requestStop(id);
         const task = manager.store.getSummary(id);
         return Response.json(
           { task: task ? displayTask(task) : null },
@@ -144,8 +148,7 @@ export async function encyclopediaRequest(
       if (body.action !== "continue" && body.action !== "restart" && body.action !== "configure") throw new Error("不支持的操作。");
       assertCurrentTaskProtocol(manager);
       const existing = manager.get(id);
-      const catalog = await readCachedModelCatalog();
-      const settings = resolveTaskModel(catalog, body, existing);
+      const settings = queuedTaskModel(body, existing);
       if (body.action === "configure") {
         if (typeof manager.configure !== "function") throw new Error("请重启后台服务以使用模型切换功能。");
         manager.configure(id, settings.model, settings.reasoning);

@@ -25,6 +25,7 @@ import type { TaskSort } from "@/types/entry-sort";
 import GuardTerminal from "./GuardTerminal";
 import ModelSelector from "./ModelSelector";
 import EncyclopediaBatch from "./EncyclopediaBatch";
+import EncyclopediaConcurrency from "./EncyclopediaConcurrency";
 import {EntryGalleryCover} from "./EncyclopediaContent";
 import {
   CategoryIcon,
@@ -569,6 +570,7 @@ export default function EncyclopediaPanel({ view }: { view: View }) {
         </span>
       </header>
       <main className="ep-main">
+        <EncyclopediaConcurrency />
         {kind !== "home" && (
           <div className="ep-breadcrumb">
             <Link href="/">词条库</Link>

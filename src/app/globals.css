@@ -1122,3 +1122,8 @@ body {
     gap: 6px;
   }
 }
+/* 全局并发设置 */
+.ep-concurrency { margin-bottom: 24px; padding: 16px 20px; border: 1px solid #dce3df; border-radius: 12px; }
+.ep-concurrency form { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+.ep-concurrency input { width: 96px; padding: 8px 10px; border: 1px solid #a8b9af; border-radius: 6px; }
+.ep-concurrency p { margin-top: 8px; font-size: 13px; }
