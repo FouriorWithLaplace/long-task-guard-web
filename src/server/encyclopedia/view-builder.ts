@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { StatementSync } from "node:sqlite";
-import { categories, hasFieldValue, hasProgramResult, taskFilterGroup } from "../../types/encyclopedia.ts";
+import { categories, hasFieldValue, taskFilterGroup } from "../../types/encyclopedia.ts";
 import type { FieldDefinition, Json } from "../../types/encyclopedia.ts";
 import { completionRatio } from "../../types/entry-sort.ts";
 import { hash, identifier, openDatabase } from "./database.ts";
@@ -128,9 +128,10 @@ export class ViewBuilder {
       if (typeof value === "string" && type && type !== "text") value = JSON.parse(value);
       const key = field.storage + "." + field.field_key;
       const program = field.collection_mode === "system";
-      if (program) computedFields[key] = hasProgramResult(value as Json);
-      if (program ? hasProgramResult(value as Json) : hasFieldValue(value as Json)) filled++;
-      fieldKeys.push(key);
+      if (!program) {
+        if (hasFieldValue(value as Json)) filled++;
+        fieldKeys.push(key);
+      }
       fields.push({key, value: value as Json, writable: !program, storage: field.storage,
         fieldKey: field.field_key, column: field.column_name, table: "wiki_type_" + row.type_key,
         label: String(field.label || field.field_key), group: String(field.group_name || ""),
@@ -211,9 +212,9 @@ export class ViewBuilder {
     }
     const mainChanges = this.db.prepare("SELECT seq,entity_id FROM panel_view_changes WHERE seq>? ORDER BY seq").all(this.manifest?.mainSequence || 0);
     const taskChanges = this.store.changes(this.manifest?.taskSequence || 0);
-    // Capture the journal boundary first. External writes after this point are replayed next time.
+    // Capture the journal boundary first. Later writes must be replayed next time.
     this.store.refreshChangedSummaries();
-    const rebuild = force || !this.manifest || this.manifest.format !== 4 || this.manifest.databaseIdentity !== this.identity ||
+    const rebuild = force || !this.manifest || this.manifest.format !== 5 || this.manifest.databaseIdentity !== this.identity ||
       schema !== this.manifest.schemaVersion || mainChanges.some(function global(row) { return Number(row.entity_id) === 0; });
     const concurrency = this.store.getConcurrency();
     const settingsChanged = !this.manifest || this.views.home().concurrency !== concurrency;
@@ -252,7 +253,7 @@ export class ViewBuilder {
       return false;
     });
     this.writeSmall("task-index.json", taskIndex);
-    const manifest: ViewManifest = { format: 4, revision: randomUUID(), mainSequence, taskSequence, schemaVersion: schema, databaseIdentity: this.identity, updatedAt: new Date().toISOString() };
+    const manifest: ViewManifest = { format: 5, revision: randomUUID(), mainSequence, taskSequence, schemaVersion: schema, databaseIdentity: this.identity, updatedAt: new Date().toISOString() };
     atomicJson(path.join(directory, "manifest.json"), manifest);
     this.manifest = manifest;
     this.db.prepare("DELETE FROM panel_view_changes WHERE seq<=?").run(mainSequence);

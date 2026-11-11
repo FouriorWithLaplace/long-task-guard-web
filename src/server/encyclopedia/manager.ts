@@ -5,7 +5,7 @@ import { isDeepStrictEqual } from "node:util";
 import type { CodexConnection, CodexEvents } from "../codex-client.ts";
 import type { TerminalTarget } from "../codex-terminal.ts";
 import type { EntryTask, StartMode } from "../../types/encyclopedia.ts";
-import { fieldIsProcessed, fieldProgress, hasProgramResult, isProgramField, isTrackedField, taskProgress } from "../../types/encyclopedia.ts";
+import { fieldIsProcessed, fieldProgress, isTrackedField, taskProgress } from "../../types/encyclopedia.ts";
 import { compareQueueOrder, readyToStart } from "../../types/task-queue.ts";
 import { hash, object, openDatabase, readEntrySummary, readDetail, readSource } from "./database.ts";
 import { panelDirectory } from "./config.ts";
@@ -464,20 +464,6 @@ export class EncyclopediaManager {
         void this.cleanupDetached(task.entityId).finally(this.pump.bind(this));
         return;
       }
-      const researchPending = detail.fields.some(function pending(field) {
-        return field.writable && !fieldIsProcessed(field, task);
-      });
-      if (!researchPending && detail.fields.some(function pending(field) {
-        return isProgramField(field) && !hasProgramResult(field.value);
-      })) {
-        task.phase = "blocked";
-        task.desired = "stopped";
-        task.slotHeld = false;
-        task.message = "资料核查已完成，程序计算字段仍未完成；等待计算结果写入数据库。";
-        this.save(task, "awaiting_computation");
-        void this.cleanupDetached(task.entityId);
-        return;
-      }
     } catch (error) {
       this.retry(task, error);
       return;
@@ -797,7 +783,7 @@ export class EncyclopediaManager {
         : null,
       remainingFields,
       instruction:
-        "fields 仅含接下来的最多 8 个字段；资料字段逐项提交后再次调用 entry_context。collection_mode=system 的字段须由程序计算写入，不能用 submit_field 提交猜测值；为空时任务仍未完成。",
+        "fields 仅含接下来的最多 8 个资料字段；每个字段逐项核查并提交后再次调用 entry_context。collection_mode=system 的程序字段不属于本次采集任务，后续由统一程序计算。",
     };
   }
   private toolRequest(
@@ -900,14 +886,9 @@ export class EncyclopediaManager {
   private completeIfReady(task: EntryTask) {
     const detail = readDetail(this.config, task.entityId);
     if (detail.dictionaryHash !== task.dictionaryHash) return false;
-    task.computedFields = {};
-    for (const field of detail.fields) {
-      if (isProgramField(field)) task.computedFields[field.key] = hasProgramResult(field.value);
-    }
     task.scope = detail.fields.filter(isTrackedField).map(function key(field) { return field.key; });
     if (
       task.scope.some(function missing(key) {
-        if (Object.hasOwn(task.computedFields!, key)) return !task.computedFields![key];
         return !task.processedFields.includes(key) || !task.results[key]?.readback;
       })
     )

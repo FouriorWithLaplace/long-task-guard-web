@@ -53,12 +53,15 @@ function task(id) {
   };
 }
 
-test('program fields are tracked and database writes realign completed tasks and list filters', function(t) {
+test('program fields stay outside progress and database writes realign research confirmations', function(t) {
   const config=fixture(t);
   const db=new DatabaseSync(config.database);
   db.exec("ALTER TABLE wiki_type_book ADD COLUMN score REAL; INSERT INTO wiki_column_fields VALUES('book','score','score','fields','system',2)");
   const store=new TaskStore(config);
   const current=task(1);
+  current.phase='stopped';
+  current.scope.push('fields.score');
+  current.computedFields={'fields.score':false};
   current.processedFields=['fields.title','fields.notes'];
   current.results['fields.title'].value='Title 1';
   current.results['fields.notes']={...current.results['fields.title'],field:'fields.notes',value:null,outcome:'not_applicable'};
@@ -68,28 +71,29 @@ test('program fields are tracked and database writes realign completed tasks and
   config.cleanup.push(function close(){builder.close();store.close();db.close();});
   builder.sync();
   const views=new PageViews(config);
-  assert.deepEqual(views.entry(1).progress,{filled:1,checked:2,total:3,percent:66});
-  assert.deepEqual(views.entries('book','',1,'completed',true).ids,[]);
-  assert.deepEqual(views.entries('book','',1,'partial',true).ids,[1]);
-  assert.equal(store.get(1).phase,'stopped');
+  assert.deepEqual(views.entry(1).progress,{filled:1,checked:2,total:2,percent:100});
+  assert.deepEqual(views.entries('book','',1,'completed',true).ids,[1]);
+  assert.equal(store.get(1).phase,'completed');
   assert.equal(store.get(1).desired,'stopped');
+  assert.deepEqual(store.get(1).scope,['fields.title','fields.notes']);
+  assert.equal(store.get(1).results['fields.notes'].outcome,'not_applicable');
   assert.deepEqual(store.get(1).cleanupSessions,['old-session-awaiting-deletion']);
   const external=new DatabaseSync(path.join(config.workspace,'panel/state.sqlite'));
   external.exec("UPDATE tasks SET body=json_set(body,'$.phase','completed') WHERE entity_id=1");
   external.close();
   builder.sync();
-  assert.equal(store.get(1).phase,'stopped','a task-file update must be checked against current database fields');
+  assert.equal(store.get(1).phase,'completed','a task-file update must be checked against current database fields');
   db.exec('UPDATE wiki_type_book SET score=0 WHERE entity_id=1');
   builder.sync();
   assert.equal(views.entry(1).progress.percent,100);
-  assert.equal(store.get(1).computedFields['fields.score'],true);
+  assert.equal(store.get(1).computedFields['fields.score'],undefined);
   assert.equal(store.get(1).phase,'completed');
   assert.deepEqual(views.entries('book','',1,'completed',true).ids,[1]);
   db.exec("UPDATE wiki_type_book SET title='Externally changed',score=NULL WHERE entity_id=1");
   builder.sync();
   assert.equal(store.get(1).phase,'stopped');
   assert.deepEqual(store.get(1).processedFields,['fields.notes']);
-  assert.deepEqual(views.entry(1).progress,{filled:1,checked:1,total:3,percent:33});
+  assert.deepEqual(views.entry(1).progress,{filled:1,checked:1,total:2,percent:50});
   builder.sync();
   assert.equal(builder.sync().changed,0);
 });
@@ -345,7 +349,7 @@ test("old projection formats rebuild completion sort keys without changing defau
   builder.close();
   const views = new PageViews(config);
   const manifest = views.manifest();
-  manifest.format = 1;
+  manifest.format = 4;
   fs.writeFileSync(path.join(viewsDirectory(config), "manifest.json"), JSON.stringify(manifest));
   const index = views.read("catalog/book.json");
   for (const item of index) delete item.completion;
@@ -354,7 +358,7 @@ test("old projection formats rebuild completion sort keys without changing defau
   builder = new ViewBuilder(config);
   assert.equal(builder.sync().rebuilt, true);
   builder.close();
-  assert.equal(views.manifest().format, 4);
+  assert.equal(views.manifest().format, 5);
   assert.equal(views.read("catalog/book.json")[0].completion, 0);
   assert.equal(views.entries("book").entries[0].id, 1);
 });

@@ -1,7 +1,7 @@
 import { isDeepStrictEqual } from "node:util";
 import { createHash, randomUUID } from "node:crypto";
 import type { EntryDetail, EntryTask } from "../../types/encyclopedia.ts";
-import {fieldProgress, hasProgramResult, isProgramField, isTrackedField, processedFieldKeys, taskProgress} from "../../types/encyclopedia.ts";
+import {fieldProgress, isTrackedField, processedFieldKeys, taskProgress} from "../../types/encyclopedia.ts";
 
 // New or transformed fields are pending; unchanged confirmed results survive.
 export function reconcileTaskSchema(task: EntryTask, detail: Pick<EntryDetail, "fields" | "dictionaryHash">, changedFields = new Set<string>()) {
@@ -11,9 +11,7 @@ export function reconcileTaskSchema(task: EntryTask, detail: Pick<EntryDetail, "
   const confirmed = new Set(processedFieldKeys(task));
   const previousScope = new Set(task.scope);
   const ruleHashes: Record<string, string> = {};
-  const computed: Record<string, boolean> = {};
   for (const field of detail.fields) {
-    if (isProgramField(field)) computed[field.key] = hasProgramResult(field.value);
     if (!field.writable) continue;
     const rules = { ...field.rules };
     for (const key of ["ordinal", "contract_version", "label", "group_name"]) delete rules[key];
@@ -42,7 +40,7 @@ export function reconcileTaskSchema(task: EntryTask, detail: Pick<EntryDetail, "
       return field.key;
     });
   task.dictionaryHash = detail.dictionaryHash;
-  task.computedFields = computed;
+  task.computedFields = {};
   task.fieldRuleHashes = ruleHashes;
   task.filled = fieldProgress(detail.fields, task).filled;
   delete task.displayProgress;
@@ -53,13 +51,13 @@ export function reconcileTaskSchema(task: EntryTask, detail: Pick<EntryDetail, "
     task.phase = "stopped";
     task.desired = "stopped";
     task.slotHeld = false;
-    task.message = "已与百科数据库对齐；资料核查或程序计算字段尚未完成，已有成果保留。";
+    task.message = "已与百科数据库对齐；资料字段尚未全部核查，已有成果保留。";
   } else if (task.phase !== "completed" && task.desired === "stopped" &&
              task.scope.length > 0 && taskProgress(task).checked === task.scope.length) {
     task.phase = "completed";
     task.slotHeld = false;
     task.nextRetryAt = null;
-    task.message = "已与百科数据库对齐；资料核查及程序计算字段均已完成。";
+    task.message = "已与百科数据库对齐；资料字段均已处理，程序计算字段不计入采集任务。";
   }
   const after = JSON.stringify([task.dictionaryHash, task.scope, task.processedFields, task.computedFields, task.fieldRuleHashes, task.filled, task.phase]);
   if (before === after) return false;

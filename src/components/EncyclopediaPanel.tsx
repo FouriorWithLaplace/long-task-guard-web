@@ -1053,7 +1053,7 @@ export default function EncyclopediaPanel({ view }: { view: View }) {
               </div>
               <TaskProgress task={currentTask} counts={counts} />
               <p className="ep-control-note">
-                资料采集和程序计算字段都计入总进度；程序字段须有数据库结果才算完成。查无资料的核查记录保留为已处理，身份和暂停采集字段单独展示。开始继续未处理项，重新开始保留内容并重置资料核查进度。
+                采集任务只处理资料字段；程序计算字段不计入任务和进度统计，后续由统一程序计算。查无资料的核查记录保留为已处理，身份和暂停采集字段单独展示。开始继续未处理项，重新开始保留内容并重置资料核查进度。
               </p>
               {!!currentTask?.cleanupSessions.length && (
                 <p className="ep-notice">

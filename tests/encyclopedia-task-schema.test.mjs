@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {reconcileTaskSchema} from '../src/server/encyclopedia/task-schema.ts';
 import {fieldProgress, taskProgress} from '../src/types/encyclopedia.ts';
 
-test('program fields stay pending until database results exist; zero and false are completed results', function () {
+test('program fields stay outside collection task progress', function () {
  const fields = [
   {key:'fields.title',writable:true,value:'Title'},
   {key:'fields.score',storage:'fields',writable:false,rules:{collection_mode:'system'},value:null},
@@ -13,16 +13,31 @@ test('program fields stay pending until database results exist; zero and false a
  ];
  const task={dictionaryHash:'same',scope:['fields.title'],processedFields:['fields.title'],results:{'fields.title':{value:'Title',readback:true}},phase:'completed',desired:'stopped'};
  reconcileTaskSchema(task,{dictionaryHash:'same',fields});
- assert.equal(task.phase,'stopped');
- assert.deepEqual(task.scope,['fields.title','fields.score','fields.count','fields.flag']);
- assert.deepEqual(fieldProgress(fields,task),{filled:3,checked:3,total:4,percent:75});
- assert.equal(taskProgress(task).checked,3);
- assert.equal(taskProgress(task).total,4);
+ assert.equal(task.phase,'completed');
+ assert.deepEqual(task.scope,['fields.title']);
+ assert.deepEqual(fieldProgress(fields,task),{filled:1,checked:1,total:1,percent:100});
+ assert.equal(taskProgress(task).checked,1);
+ assert.equal(taskProgress(task).total,1);
  assert.equal(reconcileTaskSchema(task,{dictionaryHash:'same',fields}),false);
  fields[1].value=0;
- assert.equal(reconcileTaskSchema(task,{dictionaryHash:'same',fields}),true);
+ assert.equal(reconcileTaskSchema(task,{dictionaryHash:'same',fields}),false);
  assert.equal(taskProgress(task).percent,100);
  assert.equal(task.phase,'completed');
+});
+
+test('program fields are excluded even when a legacy definition says they are writable', function () {
+ const fields = [
+  {key:'fields.title',writable:true,value:'Title',rules:{collection_mode:'evidence_required'}},
+  {key:'fields.score',storage:'fields',writable:true,value:99,rules:{collection_mode:'system'}},
+ ];
+ const task={dictionaryHash:'same',scope:['fields.title','fields.score'],processedFields:['fields.title','fields.score'],results:{
+  'fields.title':{value:'Title',readback:true},
+  'fields.score':{value:99,readback:true},
+ },phase:'completed',desired:'stopped'};
+ reconcileTaskSchema(task,{dictionaryHash:'same',fields});
+ assert.deepEqual(task.scope,['fields.title']);
+ assert.deepEqual(fieldProgress(fields,task),{filled:1,checked:1,total:1,percent:100});
+ assert.equal(taskProgress(task).total,1);
 });
 
 test('database value changes invalidate confirmations even when dictionary hash stays the same', function () {

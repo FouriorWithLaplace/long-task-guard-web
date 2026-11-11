@@ -136,7 +136,7 @@ export function FieldRow({
             (result?.outcome === "verified" ? "ep-status-completed" : "")
           }
         >
-          {program ? processed ? "程序计算 · 已完成" : "程序计算 · 未完成" : !field.writable ? "只读 · 不计入进度" : !processed
+          {program ? "程序计算 · 不计入采集任务" : !field.writable ? "只读 · 不计入进度" : !processed
             ? result ? "待重新处理" : "未处理"
             : result ? outcomeLabels[result.outcome] : "未处理"}
         </span>
@@ -149,7 +149,7 @@ export function FieldRow({
         <EncyclopediaContent value={field.value} field={field.fieldKey} entityId={entityId||task?.entityId}/>
         <p className="ep-muted">
           {field.description}
-          {program ? " 此字段由程序计算并写入数据库，计入总进度。" : !field.writable && " 此字段不允许自动修改。"}
+          {program ? " 此字段由后续统一程序计算，不属于 Codex 采集任务和进度统计。" : !field.writable && " 此字段不允许自动修改。"}
         </p>
         {result && (
           <div className="ep-evidence">

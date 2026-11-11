@@ -17,6 +17,8 @@ import { viewRequest } from "./view-http.ts";
 import { displayTask } from "./task-summary.ts";
 import { readAllFieldMarkdown } from "./field-export.ts";
 import { queuedTaskModel } from "./model-settings.ts";
+import { isProgramField } from "../../types/encyclopedia.ts";
+import type { EntryTask } from "../../types/encyclopedia.ts";
 
 function entityId(value: string | undefined) {
   if (
@@ -26,6 +28,21 @@ function entityId(value: string | undefined) {
   )
     throw new Error("词条 ID 不合法。");
   return Number(value);
+}
+
+function taskForResearch(task: EntryTask | null, programKeys: Set<string>) {
+  if (!task) return null;
+  const visible = {
+    ...task,
+    scope: task.scope.filter(function researchField(key) { return !programKeys.has(key); }),
+    processedFields: task.processedFields.filter(function researchField(key) { return !programKeys.has(key); }),
+    results: Object.fromEntries(Object.entries(task.results).filter(function researchResult(pair) {
+      return !programKeys.has(pair[0]);
+    })),
+  };
+  delete visible.computedFields;
+  delete visible.displayProgress;
+  return visible;
 }
 export async function encyclopediaRequest(
   request: Request,
@@ -94,9 +111,16 @@ export async function encyclopediaRequest(
       } else if (segments[0] === "entries" && segments.length === 2) {
         const id = entityId(segments[1]);
         const history = manager.history(id);
+        const entry = readDetail(paths, id);
+        const programKeys = new Set(entry.fields.filter(isProgramField).map(function key(field) { return field.key; }));
+        // Program fields stay in the database and dictionary for later indexing,
+        // but this task's detail view exposes only research fields.
+        entry.fields = entry.fields.filter(function researchField(field) {
+          return !isProgramField(field);
+        });
         result = {
-          entry: readDetail(paths, id),
-          task: manager.get(id),
+          entry,
+          task: taskForResearch(manager.get(id), programKeys),
           history,
         };
       } else return Response.json({ error: "接口不存在。" }, { status: 404 });

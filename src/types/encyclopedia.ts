@@ -283,12 +283,8 @@ export function taskProgress(task: EntryTask) {
   let pendingReview = 0;
   let missing = 0;
   let changed = 0;
-  const scope = [...new Set([...task.scope, ...Object.keys(task.computedFields || {})])];
+  const scope = [...new Set(task.scope)];
   for (const key of scope) {
-    if (Object.hasOwn(task.computedFields || {}, key)) {
-      if (task.computedFields![key]) checked++;
-      continue;
-    }
     const result = task.results[key];
     if (!result || !processed.has(key)) continue;
     if (result.readback) checked++;
@@ -327,7 +323,9 @@ export function isProgramField(field: Pick<FieldDefinition, "storage" | "rules">
 }
 
 export function isTrackedField(field: Pick<FieldDefinition, "storage" | "rules" | "writable">) {
-  return field.writable || isProgramField(field);
+  // A system field is never part of the research task, even if an old or
+  // incomplete dictionary snapshot incorrectly marks it writable.
+  return field.writable && !isProgramField(field);
 }
 
 export function hasProgramResult(value: Json): boolean {
@@ -336,7 +334,7 @@ export function hasProgramResult(value: Json): boolean {
 }
 
 export function fieldIsProcessed(field: FieldDefinition, task?: EntryTask | null): boolean {
-  if (isProgramField(field)) return hasProgramResult(field.value);
+  if (isProgramField(field)) return false;
   return processedFieldKeys(task).includes(field.key) && !!task?.results[field.key]?.readback;
 }
 
@@ -350,7 +348,7 @@ export function fieldProgress(
   for (const field of fields) {
     if (!isTrackedField(field)) continue;
     total++;
-    if (isProgramField(field) ? hasProgramResult(field.value) : hasFieldValue(field.value)) filled++;
+    if (hasFieldValue(field.value)) filled++;
     if (fieldIsProcessed(field, task)) checked++;
   }
   return { filled, checked, total, percent: total ? Math.floor(checked * 100 / total) : 0 };

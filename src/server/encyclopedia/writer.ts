@@ -5,7 +5,6 @@ import { randomUUID } from "node:crypto";
 import { gunzipSync } from "node:zlib";
 import { isDeepStrictEqual } from "node:util";
 import { normalizeStructuredValue } from "./structured-value.ts";
-import { updateComputedFields } from './computed.ts';
 import {
   hash,
   object,
@@ -354,8 +353,6 @@ export class EntryWriter {
           source.excerpt,
         );
       }
-      updateComputedFields(this.config, db, detail, fields, sections,
-        Object.entries(task.results).filter(function notApplicable([, item]) { return item.outcome === 'not_applicable' && item.readback; }).map(function field([key]) { return key; }));
       db.prepare(
         "UPDATE wiki_entry_profiles SET fields=?,sections=?,version=version+1,updated_at=datetime('now'),state='pending',is_presentable=0,reason=? WHERE entity_id=? AND version=?",
       ).run(
