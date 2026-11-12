@@ -20,6 +20,13 @@
 .ep-export h2 { font-size: 18px; font-weight: 600; }
 .ep-export p { margin-top: 8px; color: #53655b; font-size: 14px; }
 .ep-export .ep-export-status { font-size: 12px; }
+.ep-export-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
 .ep-export button { flex-shrink: 0; }
 @media (max-width: 640px) {
   .ep-export { align-items: stretch; flex-direction: column; padding: 20px; }

@@ -30,6 +30,8 @@ import ModelSelector from "./ModelSelector";
 import EncyclopediaBatch from "./EncyclopediaBatch";
 import EncyclopediaConcurrency from "./EncyclopediaConcurrency";
 import {EntryGalleryCover} from "./EncyclopediaContent";
+import { waitForArchive } from "./encyclopedia-export";
+import type { ReadyExport } from "./encyclopedia-export";
 import {
   CategoryIcon,
   FieldRow,
@@ -64,6 +66,10 @@ interface HomeResponse {
   })[];
   workspace: string;
   activeCount: number;
+}
+interface ExportStartResponse {
+  jobUrl: string;
+  error?: string;
 }
 const activePhases = new Set([
   "queued",
@@ -124,6 +130,7 @@ export default function EncyclopediaPanel({ view }: { view: View }) {
   const [runningBatchBusy, setRunningBatchBusy] = useState(false);
   const [downloadingFields, setDownloadingFields] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [readyArchive, setReadyArchive] = useState<ReadyExport | null>(null);
   const [exportMessage, setExportMessage] = useState("");
   const exportController = useRef<AbortController | null>(null);
   const fieldsController = useRef<AbortController | null>(null);
@@ -157,23 +164,44 @@ export default function EncyclopediaPanel({ view }: { view: View }) {
     setExportMessage("");
     setError("");
     try {
+      if (readyArchive) {
+        await fetch(readyArchive.url, { method: "DELETE", signal: controller.signal });
+        setReadyArchive(null);
+      }
       const response = await fetch("/api/encyclopedia/export", { method: "POST", signal: controller.signal });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error || "导出失败，请重试。");
+      const started: ExportStartResponse = await response.json();
+      if (!response.ok) throw new Error(started.error || "导出失败，请重试。");
+      setExportMessage("导出任务已提交，后台正在准备，页面会持续查询状态…");
+      const result = await waitForArchive(started.jobUrl, controller.signal);
+      controller.signal.throwIfAborted();
+      setReadyArchive(result);
       const anchor = document.createElement("a");
       anchor.href = result.url;
       anchor.download = result.filename;
       document.body.appendChild(anchor);
       anchor.click();
       anchor.remove();
-      setExportMessage("已生成包含 " + result.count + " 个词条的压缩包，已发起下载。");
+      setExportMessage("已生成包含 " + result.count + " 个词条的压缩包（不含原始资料），已尝试发起下载。如果未出现下载，请点击“下载 ZIP”。链接有效期为 10 分钟。");
     } catch (failure) {
-      if (!controller.signal.aborted) setError(failure instanceof Error ? failure.message : "导出失败。");
+      if (!controller.signal.aborted) {
+        const message = failure instanceof Error ? failure.message : "导出失败，请重试。";
+        setExportMessage("导出失败：" + message);
+        setError(message);
+      }
     } finally {
       exportController.current = null;
       if (!controller.signal.aborted) setExporting(false);
     }
   }
+
+  useEffect(function expireArchiveLink() {
+    if (!readyArchive) return;
+    const timer = setTimeout(function expire() {
+      setReadyArchive(null);
+      setExportMessage("下载链接已过期，请重新导出。");
+    }, Math.max(0, readyArchive.expiresAt - Date.now()));
+    return function cleanup() { clearTimeout(timer); };
+  }, [readyArchive]);
 
   const refresh = useCallback(
     async function refresh(signal?: AbortSignal) {
@@ -650,14 +678,24 @@ export default function EncyclopediaPanel({ view }: { view: View }) {
             <section className="ep-export" aria-label="导出已完成词条">
               <div>
                 <h2>保存已完成的成果</h2>
-                <p>一键下载全部已完成词条的数据库，以及关联原件和图片。</p>
+                <p>下载全部已完成词条的数据库和展示用图片，不包含 PDF、讲义等原始资料文件。</p>
                 <p className="ep-export-status" role="status" aria-live="polite">
-                  {exporting ? "正在准备数据库和附件，文件较多时请稍候…" : exportMessage || "仅包含已完成词条；数据库结构和原始 ID 保持不变。"}
+                  {exportMessage || (exporting ? "正在准备数据库和图片，请稍候…" : "仅包含已完成词条；数据库结构和原始 ID 保持不变。")}
                 </p>
               </div>
-              <button className="ep-button ep-primary" onClick={downloadCompleted} disabled={exporting} aria-busy={exporting}>
-                {exporting ? "正在打包…" : "导出全部已完成词条"}
-              </button>
+              <div className="ep-export-actions">
+                <button
+                  className="ep-button ep-primary"
+                  onClick={downloadCompleted}
+                  disabled={exporting}
+                  aria-busy={exporting}
+                >
+                  {exporting ? "正在打包…" : "导出全部已完成词条"}
+                </button>
+                {readyArchive && !exporting && (
+                  <a className="ep-button" href={readyArchive.url} download={readyArchive.filename}>下载 ZIP</a>
+                )}
+              </div>
             </section>
             <div className="ep-section-title">
               <h2>探索词条库</h2>
