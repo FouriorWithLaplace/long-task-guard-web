@@ -49,7 +49,7 @@ test('migrate an isolated real-schema subset: values, deletion, triggers, free J
   db.prepare('UPDATE wiki_type_org SET name_en=NULL,english_name=? WHERE entity_id=?').run(JSON.stringify(legacyName),organization.entity_id);
   db.prepare("INSERT OR REPLACE INTO wiki_column_value_types(entity_id,column_name,json_type) VALUES(?,'english_name','object')").run(organization.entity_id);
   db.prepare('UPDATE wiki_entry_profiles SET fields=? WHERE entity_id=?').run(JSON.stringify({...JSON.parse(organization.fields),english_name:legacyName}),organization.entity_id);
-  db.prepare('DELETE FROM wiki_entry_schema_migrations WHERE version>=?').run(contract.SCHEMA_REVISION);
+  db.prepare('DELETE FROM wiki_entry_schema_migrations WHERE version>=?').run(5);
   const before=db.prepare("SELECT p.entity_id,e.name,p.type_key FROM wiki_entry_profiles p JOIN entities e ON e.id=p.entity_id").all();
   const report=applySchemaMigration(db,contract,fingerprint);
   if(!report.alreadyApplied)assert.equal(report.totalAfter,before.length-report.removedIds.length);
@@ -94,7 +94,7 @@ test('migrate an isolated real-schema subset: values, deletion, triggers, free J
   const migratedOrg=db.prepare('SELECT name_en,aliases FROM wiki_type_org WHERE entity_id=?').get(organization.entity_id);
   assert.equal(migratedOrg.name_en,null);
   assert.ok(JSON.stringify(JSON.parse(migratedOrg.aliases)).includes(JSON.stringify(legacyName)));
-  assert.equal(db.prepare("SELECT count(*) n FROM wiki_column_fields WHERE type_key='person' AND storage<>'identity' AND collection_mode NOT IN ('paused','system')").get().n,0);
-  assert.equal(db.prepare("SELECT collection_mode FROM wiki_column_fields WHERE type_key='device' AND field_key='assessment'").get().collection_mode,'paused');
+  assert.equal(db.prepare("SELECT count(*) n FROM wiki_column_fields WHERE collection_mode='paused'").get().n,0);
+  assert.equal(db.prepare("SELECT collection_mode FROM wiki_column_fields WHERE type_key='device' AND field_key='assessment'").get().collection_mode,'evidence_required');
  }finally{db.close();}
 });

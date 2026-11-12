@@ -402,6 +402,26 @@ export function applySchemaMigration(db, contract, fingerprint) {
   }
   if (db.prepare("PRAGMA foreign_key_check").get())
     throw Error("Source database has foreign-key violations");
+  // Revision 6 changes collection policy only. Preserve content tables, values,
+  // evidence and computed results instead of rebuilding the entire database.
+  const currentRevision = Number(db.prepare("SELECT max(version) version FROM wiki_entry_schema_migrations").get()?.version || 0);
+  if (contract.SCHEMA_REVISION === 6 && currentRevision === 5) {
+    const rows = db.prepare("SELECT * FROM wiki_column_fields WHERE storage<>'identity' AND collection_mode='paused'").all();
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      const update = db.prepare("UPDATE wiki_column_fields SET collection_mode=?,description=?,source_policy=?,contract_version=? WHERE type_key=? AND storage=? AND field_key=?");
+      for (const row of rows) {
+        const released = contract.releaseCollectionFreeze({...row, collectionMode: row.collection_mode});
+        update.run(released.collectionMode, released.description, released.source_policy, 6, row.type_key, row.storage, row.field_key);
+      }
+      db.prepare("INSERT INTO wiki_entry_schema_migrations(version,sha256) VALUES(?,?)").run(6, fingerprint);
+      db.exec("COMMIT");
+      return { version: 6, releasedFields: rows.length, removedIds: [], policyOnly: true };
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
+  }
   const plans = migrationPlan(db, contract);
   const previousRevision = Number(db.prepare("SELECT max(version) version FROM wiki_entry_schema_migrations").get()?.version || 0);
   const removed = db

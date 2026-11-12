@@ -1,6 +1,6 @@
 # 全部分类词条数据库字段
 
-导出时间：2026/11/10 18:01:17（北京时间）
+导出时间：2026/11/12 11:42:34（北京时间）
 
 共 15 个词条表，489 个数据库字段。
 
@@ -183,7 +183,7 @@
 | corrections | 更正与撤稿信息 | TEXT | fields.corrections | evidence_required | 更正、撤稿和关注声明保留日期、来源与对应论文版本，不以新版本覆盖历史声明。 |
 | related_papers | 相关论文 | TEXT | fields.related_papers | evidence_required | 关联应说明关系类型和原因，区分介绍、设计、使用、产出与引用；优先引用实际库内entity_id，否则保留外部名称与URL或DOI，不创建虚假ID。涉及版本、实验或时间轴节点时注明对应版本和节点ID。区分预印本、正式版、后续研究、更正和引用；不混同独立研究。 |
 | related_books | 相关著作 | TEXT | fields.related_books | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
-| citation_count | 历史引用资料（口径待核） | TEXT | fields.citation_count | paused | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
+| citation_count | 历史引用资料（口径待核） | TEXT | fields.citation_count | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
 | metrics_source | 引用统计来源 | TEXT | fields.metrics_source | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
 | metrics_date | 引用统计日期 | TEXT | fields.metrics_date | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
 | peer_reviews | 审稿意见 | TEXT | fields.peer_reviews | evidence_required | 公开同行评审原文：记录论文版本、评审轮次、审稿人公开身份、原始意见、作者回复、日期、来源URL；意见与回复分开，不猜测匿名身份，不得用用户评论或AI评价代替。 |
@@ -283,7 +283,7 @@
 | route | 技术路线 | TEXT | fields.route | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
 | website | 官方网站 | TEXT | fields.website | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
 | overview | 装置简介 | TEXT | fields.overview | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
-| assessment | 综合评定 | TEXT | fields.assessment | paused | 综合评定暂不采集、不生成评分；空值保持空值，已有历史资料保留，不作为已实现的打分系统。 |
+| assessment | 综合评定 | TEXT | fields.assessment | evidence_required | 采集有来源的综合评价文字，区分来源观点与事实；不自行生成数值评分。 |
 | construction_background | 建设背景 | TEXT | fields.construction_background | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
 | principle | 装置原理 | TEXT | fields.principle | evidence_required | 描述装置物理与工程工作原理，和建设背景、研究目标分别保存，不从设计参数推断未提供的机制。 |
 | objectives | 装置目标 | TEXT | fields.objectives | evidence_required | 有来源的研究与工程目标；区分目标和已实现成果。 |
@@ -381,50 +381,50 @@
 | entity_id | 稳定实体ID | INTEGER | identity.entity_id | system | 保留现有身份信息，不改变词条ID与主体。 |
 | name | 规范名称 | TEXT | identity.name | system | 保留现有身份信息，不改变词条ID与主体。 |
 | name_en | 英文原名 | TEXT | identity.name_en | system | 保留现有身份信息，不改变词条ID与主体。 |
-| full_name | 姓名 | TEXT | fields.full_name | paused | 人物新增采集统一暂停，保留现有内容，恢复前不自动补充身份、履历和关系。 含义：可靠原始资料明确归属于本人的完整姓名，保持姓名顺序和原有拼写。<br>不包含：不从首字母猜全名，不因同名绑定人物。<br>格式：单个非空文本，保持事实限定；多项用分号分隔，同项去重但不丢失时间与角色。<br>单位与条件：按原文保留单位、版本、时间和工况，不从上下文猜数值。<br>适用性：仅当资料明确涉及本词条对应事实时采集；无对应事实不得推断。<br>来源：人物新增内容仍暂停；本次仅定义字段。恢复前不得据此自动联网补履历、身份、署名或关系。<br>缺失：未找到、明确不适用、来源冲突分别输出 not_found、not_applicable、conflict，并附原因；value 为 null。不得写未知、暂无资料、N/A等占位内容，不得用0、false或空数组代表未知，不删除已有值。<br>冲突：比较同一主体、版本、时间和口径的原始证据；保留各候选值及证据，不投票、不平均、不按搜索排名选择，不自动覆盖旧值。不同时间或工况属于多个有条件事实，不冒充冲突。<br>证据：每个 found 值附支持该值的原文摘录、具体来源URL、source_kind、原文位置locator、资料日期source_date（不详则null）、实际访问日期accessed_at；不得编造网址、页码、日期或摘录。文本整理须逐项可追溯；URL字段的证据来自介绍该链接的页面。 |
-| romanized_name | 拉丁字母署名 | TEXT | fields.romanized_name | paused | 人物新增采集统一暂停，保留现有内容，恢复前不自动补充身份、履历和关系。 含义：本人或权威资料实际使用的拉丁字母署名或罗马化姓名。<br>不包含：不由AI自行转写或按机构国家推断姓名。<br>格式：单个非空文本，保持事实限定；多项用分号分隔，同项去重但不丢失时间与角色。<br>单位与条件：按原文保留单位、版本、时间和工况，不从上下文猜数值。<br>适用性：仅当资料明确涉及本词条对应事实时采集；无对应事实不得推断。<br>来源：人物新增内容仍暂停；本次仅定义字段。恢复前不得据此自动联网补履历、身份、署名或关系。<br>缺失：未找到、明确不适用、来源冲突分别输出 not_found、not_applicable、conflict，并附原因；value 为 null。不得写未知、暂无资料、N/A等占位内容，不得用0、false或空数组代表未知，不删除已有值。<br>冲突：比较同一主体、版本、时间和口径的原始证据；保留各候选值及证据，不投票、不平均、不按搜索排名选择，不自动覆盖旧值。不同时间或工况属于多个有条件事实，不冒充冲突。<br>证据：每个 found 值附支持该值的原文摘录、具体来源URL、source_kind、原文位置locator、资料日期source_date（不详则null）、实际访问日期accessed_at；不得编造网址、页码、日期或摘录。文本整理须逐项可追溯；URL字段的证据来自介绍该链接的页面。 |
-| orcid | ORCID | TEXT | fields.orcid | paused | 人物新增采集统一暂停，保留现有内容，恢复前不自动补充身份、履历和关系。 含义：经权威身份信息核对属于本人的ORCID。<br>不包含：不采用搜索同名命中而未经机构、作品等核对的号码。<br>格式：单个通过校验位验证的ORCID，格式0000-0000-0000-000X；必须有同一人物身份依据。<br>单位与条件：不适用。<br>适用性：仅当资料明确涉及本词条对应事实时采集；无对应事实不得推断。<br>来源：人物新增内容仍暂停；本次仅定义字段。恢复前不得据此自动联网补履历、身份、署名或关系。<br>缺失：未找到、明确不适用、来源冲突分别输出 not_found、not_applicable、conflict，并附原因；value 为 null。不得写未知、暂无资料、N/A等占位内容，不得用0、false或空数组代表未知，不删除已有值。<br>冲突：比较同一主体、版本、时间和口径的原始证据；保留各候选值及证据，不投票、不平均、不按搜索排名选择，不自动覆盖旧值。不同时间或工况属于多个有条件事实，不冒充冲突。<br>证据：每个 found 值附支持该值的原文摘录、具体来源URL、source_kind、原文位置locator、资料日期source_date（不详则null）、实际访问日期accessed_at；不得编造网址、页码、日期或摘录。文本整理须逐项可追溯；URL字段的证据来自介绍该链接的页面。 |
-| institutions | 文献署名机构 | TEXT | fields.institutions | paused | 人物新增采集统一暂停，保留现有内容，恢复前不自动补充身份、履历和关系。 含义：原始文献中该人物署名所属机构，保留文献时点与原有层级。<br>不包含：不直接当作当前任职，不把合作者的机构分配给本人。<br>格式：有序非空字符串数组；作者按署名顺序，其余按来源顺序；不按逗号拆分人名或机构名。<br>单位与条件：每项保留必要时间、角色及条件，不能用数组序号猜映射。<br>适用性：仅当资料明确涉及本词条对应事实时采集；无对应事实不得推断。<br>来源：人物新增内容仍暂停；本次仅定义字段。恢复前不得据此自动联网补履历、身份、署名或关系。<br>缺失：未找到、明确不适用、来源冲突分别输出 not_found、not_applicable、conflict，并附原因；value 为 null。不得写未知、暂无资料、N/A等占位内容，不得用0、false或空数组代表未知，不删除已有值。<br>冲突：比较同一主体、版本、时间和口径的原始证据；保留各候选值及证据，不投票、不平均、不按搜索排名选择，不自动覆盖旧值。不同时间或工况属于多个有条件事实，不冒充冲突。<br>证据：每个 found 值附支持该值的原文摘录、具体来源URL、source_kind、原文位置locator、资料日期source_date（不详则null）、实际访问日期accessed_at；不得编造网址、页码、日期或摘录。文本整理须逐项可追溯；URL字段的证据来自介绍该链接的页面。 |
-| research_fields | 研究领域 | TEXT | fields.research_fields | paused | 人物新增采集统一暂停，保留现有内容，恢复前不自动补充身份、履历和关系。 含义：可靠资料明确说明或已审核研究记录支持的研究方向。<br>不包含：不根据一篇合著论文标题自动扩展个人全部研究领域。<br>格式：有序非空字符串数组；作者按署名顺序，其余按来源顺序；不按逗号拆分人名或机构名。<br>单位与条件：每项保留必要时间、角色及条件，不能用数组序号猜映射。<br>适用性：仅当资料明确涉及本词条对应事实时采集；无对应事实不得推断。<br>来源：人物新增内容仍暂停；本次仅定义字段。恢复前不得据此自动联网补履历、身份、署名或关系。<br>缺失：未找到、明确不适用、来源冲突分别输出 not_found、not_applicable、conflict，并附原因；value 为 null。不得写未知、暂无资料、N/A等占位内容，不得用0、false或空数组代表未知，不删除已有值。<br>冲突：比较同一主体、版本、时间和口径的原始证据；保留各候选值及证据，不投票、不平均、不按搜索排名选择，不自动覆盖旧值。不同时间或工况属于多个有条件事实，不冒充冲突。<br>证据：每个 found 值附支持该值的原文摘录、具体来源URL、source_kind、原文位置locator、资料日期source_date（不详则null）、实际访问日期accessed_at；不得编造网址、页码、日期或摘录。文本整理须逐项可追溯；URL字段的证据来自介绍该链接的页面。 |
-| aliases | 其他姓名与署名 | TEXT | fields.aliases | paused | 人物新增采集统一暂停，保留现有内容，恢复前不自动补充身份、履历和关系。 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
-| nationality | 国籍 | TEXT | fields.nationality | paused | 人物新增采集统一暂停，保留现有内容，恢复前不自动补充身份、履历和关系。 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
-| birth_date | 出生日期 | TEXT | fields.birth_date | paused | 人物新增采集统一暂停，保留现有内容，恢复前不自动补充身份、履历和关系。 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
-| birth_place | 出生地 | TEXT | fields.birth_place | paused | 人物新增采集统一暂停，保留现有内容，恢复前不自动补充身份、履历和关系。 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
-| death_date | 逝世日期 | TEXT | fields.death_date | paused | 人物新增采集统一暂停，保留现有内容，恢复前不自动补充身份、履历和关系。 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
-| researcher_identifier | 其他学术标识 | TEXT | fields.researcher_identifier | paused | 人物新增采集统一暂停，保留现有内容，恢复前不自动补充身份、履历和关系。 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
-| personal_website | 个人主页 | TEXT | fields.personal_website | paused | 人物新增采集统一暂停，保留现有内容，恢复前不自动补充身份、履历和关系。 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
-| degree | 最高学位 | TEXT | fields.degree | paused | 人物新增采集统一暂停，保留现有内容，恢复前不自动补充身份、履历和关系。 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
-| education_history | 教育履历 | TEXT | fields.education_history | paused | 人物新增采集统一暂停，保留现有内容，恢复前不自动补充身份、履历和关系。 合并同义字段，保留原始内容、来源和条件；不得重复填充已合并的旧字段。 |
-| current_affiliation | 现任机构 | TEXT | fields.current_affiliation | paused | 人物新增采集统一暂停，保留现有内容，恢复前不自动补充身份、履历和关系。 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
-| academic_title | 职务与职称 | TEXT | fields.academic_title | paused | 人物新增采集统一暂停，保留现有内容，恢复前不自动补充身份、履历和关系。 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
-| positions | 任职履历 | TEXT | fields.positions | paused | 人物新增采集统一暂停，保留现有内容，恢复前不自动补充身份、履历和关系。 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
-| mentors | 导师 | TEXT | fields.mentors | paused | 人物新增采集统一暂停，保留现有内容，恢复前不自动补充身份、履历和关系。 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
-| students | 指导学生 | TEXT | fields.students | paused | 人物新增采集统一暂停，保留现有内容，恢复前不自动补充身份、履历和关系。 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
-| memberships | 学会与学术组织 | TEXT | fields.memberships | paused | 人物新增采集统一暂停，保留现有内容，恢复前不自动补充身份、履历和关系。 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
-| research_topics | 研究主题 | TEXT | fields.research_topics | paused | 人物新增采集统一暂停，保留现有内容，恢复前不自动补充身份、履历和关系。 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
-| representative_works | 代表论文与著作 | TEXT | fields.representative_works | paused | 人物新增采集统一暂停，保留现有内容，恢复前不自动补充身份、履历和关系。 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
-| research_projects | 参与研究计划 | TEXT | fields.research_projects | paused | 人物新增采集统一暂停，保留现有内容，恢复前不自动补充身份、履历和关系。 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
-| related_devices | 相关实验装置 | TEXT | fields.related_devices | paused | 人物新增采集统一暂停，保留现有内容，恢复前不自动补充身份、履历和关系。 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
-| patents | 专利与技术转化 | TEXT | fields.patents | paused | 人物新增采集统一暂停，保留现有内容，恢复前不自动补充身份、履历和关系。 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
-| software | 软件与代码 | TEXT | fields.software | paused | 人物新增采集统一暂停，保留现有内容，恢复前不自动补充身份、履历和关系。 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
-| datasets | 公开数据集 | TEXT | fields.datasets | paused | 人物新增采集统一暂停，保留现有内容，恢复前不自动补充身份、履历和关系。 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
-| collaborators | 合作研究者 | TEXT | fields.collaborators | paused | 人物新增采集统一暂停，保留现有内容，恢复前不自动补充身份、履历和关系。 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
-| awards | 奖项与荣誉 | TEXT | fields.awards | paused | 人物新增采集统一暂停，保留现有内容，恢复前不自动补充身份、履历和关系。 合并同义字段，保留原始内容、来源和条件；不得重复填充已合并的旧字段。 |
-| invited_lectures | 受邀报告 | TEXT | fields.invited_lectures | paused | 人物新增采集统一暂停，保留现有内容，恢复前不自动补充身份、履历和关系。 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
-| teaching_courses | 教学与课程 | TEXT | fields.teaching_courses | paused | 人物新增采集统一暂停，保留现有内容，恢复前不自动补充身份、履历和关系。 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
-| academic_service | 学术服务 | TEXT | fields.academic_service | paused | 人物新增采集统一暂停，保留现有内容，恢复前不自动补充身份、履历和关系。 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
-| paper_count | 论文数量 | TEXT | fields.paper_count | paused | 人物新增采集统一暂停，保留现有内容，恢复前不自动补充身份、履历和关系。 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
-| citation_count | 被引次数 | TEXT | fields.citation_count | paused | 人物新增采集统一暂停，保留现有内容，恢复前不自动补充身份、履历和关系。 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
-| h_index | H 指数 | TEXT | fields.h_index | paused | 人物新增采集统一暂停，保留现有内容，恢复前不自动补充身份、履历和关系。 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
-| metrics_source | 计量数据来源 | TEXT | fields.metrics_source | paused | 人物新增采集统一暂停，保留现有内容，恢复前不自动补充身份、履历和关系。 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
-| metrics_date | 计量数据统计日期 | TEXT | fields.metrics_date | paused | 人物新增采集统一暂停，保留现有内容，恢复前不自动补充身份、履历和关系。 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
-| overview | 人物简介 | TEXT | sections.overview | paused | 人物新增采集统一暂停，保留现有内容，恢复前不自动补充身份、履历和关系。 含义：有身份依据的人物简介，区分已确认身份和文献署名事实。<br>不包含：不猜出生、职称、国籍，不以作者登记句充当简介。<br>格式：有证据的连贯中文正文，可用Markdown和LaTeX；保留事实条件；不写采集过程、占位内容或未经支持的评价。<br>单位与条件：涉及数值时保留单位、误差、工况和来源时点。<br>适用性：仅当资料明确涉及本词条对应事实时采集；无对应事实不得推断。<br>来源：人物新增内容仍暂停；本次仅定义字段。恢复前不得据此自动联网补履历、身份、署名或关系。<br>缺失：未找到、明确不适用、来源冲突分别输出 not_found、not_applicable、conflict，并附原因；value 为 null。不得写未知、暂无资料、N/A等占位内容，不得用0、false或空数组代表未知，不删除已有值。<br>冲突：比较同一主体、版本、时间和口径的原始证据；保留各候选值及证据，不投票、不平均、不按搜索排名选择，不自动覆盖旧值。不同时间或工况属于多个有条件事实，不冒充冲突。<br>证据：每个 found 值附支持该值的原文摘录、具体来源URL、source_kind、原文位置locator、资料日期source_date（不详则null）、实际访问日期accessed_at；不得编造网址、页码、日期或摘录。文本整理须逐项可追溯；URL字段的证据来自介绍该链接的页面。 |
-| career | 研究经历 | TEXT | sections.career | paused | 人物新增采集统一暂停，保留现有内容，恢复前不自动补充身份、履历和关系。 含义：明确记载的任职机构、职务、工作内容及时间段。<br>不包含：不将署名机构自动升级为任职履历。<br>格式：有证据的连贯中文正文，可用Markdown和LaTeX；保留事实条件；不写采集过程、占位内容或未经支持的评价。<br>单位与条件：涉及数值时保留单位、误差、工况和来源时点。<br>适用性：仅当资料明确涉及本词条对应事实时采集；无对应事实不得推断。<br>来源：人物新增内容仍暂停；本次仅定义字段。恢复前不得据此自动联网补履历、身份、署名或关系。<br>缺失：未找到、明确不适用、来源冲突分别输出 not_found、not_applicable、conflict，并附原因；value 为 null。不得写未知、暂无资料、N/A等占位内容，不得用0、false或空数组代表未知，不删除已有值。<br>冲突：比较同一主体、版本、时间和口径的原始证据；保留各候选值及证据，不投票、不平均、不按搜索排名选择，不自动覆盖旧值。不同时间或工况属于多个有条件事实，不冒充冲突。<br>证据：每个 found 值附支持该值的原文摘录、具体来源URL、source_kind、原文位置locator、资料日期source_date（不详则null）、实际访问日期accessed_at；不得编造网址、页码、日期或摘录。文本整理须逐项可追溯；URL字段的证据来自介绍该链接的页面。 |
-| contributions | 主要成果 | TEXT | sections.contributions | paused | 人物新增采集统一暂停，保留现有内容，恢复前不自动补充身份、履历和关系。 合并同义字段，保留原始内容、来源和条件；不得重复填充已合并的旧字段。 |
-| research_path | 研究方向与发展脉络 | TEXT | sections.research_path | paused | 人物新增采集统一暂停，保留现有内容，恢复前不自动补充身份、履历和关系。 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
-| scientific_impact | 学术影响 | TEXT | sections.scientific_impact | paused | 人物新增采集统一暂停，保留现有内容，恢复前不自动补充身份、履历和关系。 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
-| teaching_and_service | 教学与学术服务 | TEXT | sections.teaching_and_service | paused | 人物新增采集统一暂停，保留现有内容，恢复前不自动补充身份、履历和关系。 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
-| career_timeline | 生平与研究年表 | TEXT | sections.career_timeline | paused | 人物新增采集统一暂停，保留现有内容，恢复前不自动补充身份、履历和关系。 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
+| full_name | 姓名 | TEXT | fields.full_name | evidence_required | 含义：可靠原始资料明确归属于本人的完整姓名，保持姓名顺序和原有拼写。<br>不包含：不从首字母猜全名，不因同名绑定人物。<br>格式：单个非空文本，保持事实限定；多项用分号分隔，同项去重但不丢失时间与角色。<br>单位与条件：按原文保留单位、版本、时间和工况，不从上下文猜数值。<br>适用性：仅当资料明确涉及本词条对应事实时采集；无对应事实不得推断。<br>来源：依据可追溯的原始资料核查并补充人物信息，确认同一人物后记录身份、履历、署名及关系。<br>缺失：未找到、明确不适用、来源冲突分别输出 not_found、not_applicable、conflict，并附原因；value 为 null。不得写未知、暂无资料、N/A等占位内容，不得用0、false或空数组代表未知，不删除已有值。<br>冲突：比较同一主体、版本、时间和口径的原始证据；保留各候选值及证据，不投票、不平均、不按搜索排名选择，不自动覆盖旧值。不同时间或工况属于多个有条件事实，不冒充冲突。<br>证据：每个 found 值附支持该值的原文摘录、具体来源URL、source_kind、原文位置locator、资料日期source_date（不详则null）、实际访问日期accessed_at；不得编造网址、页码、日期或摘录。文本整理须逐项可追溯；URL字段的证据来自介绍该链接的页面。 |
+| romanized_name | 拉丁字母署名 | TEXT | fields.romanized_name | evidence_required | 含义：本人或权威资料实际使用的拉丁字母署名或罗马化姓名。<br>不包含：不由AI自行转写或按机构国家推断姓名。<br>格式：单个非空文本，保持事实限定；多项用分号分隔，同项去重但不丢失时间与角色。<br>单位与条件：按原文保留单位、版本、时间和工况，不从上下文猜数值。<br>适用性：仅当资料明确涉及本词条对应事实时采集；无对应事实不得推断。<br>来源：依据可追溯的原始资料核查并补充人物信息，确认同一人物后记录身份、履历、署名及关系。<br>缺失：未找到、明确不适用、来源冲突分别输出 not_found、not_applicable、conflict，并附原因；value 为 null。不得写未知、暂无资料、N/A等占位内容，不得用0、false或空数组代表未知，不删除已有值。<br>冲突：比较同一主体、版本、时间和口径的原始证据；保留各候选值及证据，不投票、不平均、不按搜索排名选择，不自动覆盖旧值。不同时间或工况属于多个有条件事实，不冒充冲突。<br>证据：每个 found 值附支持该值的原文摘录、具体来源URL、source_kind、原文位置locator、资料日期source_date（不详则null）、实际访问日期accessed_at；不得编造网址、页码、日期或摘录。文本整理须逐项可追溯；URL字段的证据来自介绍该链接的页面。 |
+| orcid | ORCID | TEXT | fields.orcid | evidence_required | 含义：经权威身份信息核对属于本人的ORCID。<br>不包含：不采用搜索同名命中而未经机构、作品等核对的号码。<br>格式：单个通过校验位验证的ORCID，格式0000-0000-0000-000X；必须有同一人物身份依据。<br>单位与条件：不适用。<br>适用性：仅当资料明确涉及本词条对应事实时采集；无对应事实不得推断。<br>来源：依据可追溯的原始资料核查并补充人物信息，确认同一人物后记录身份、履历、署名及关系。<br>缺失：未找到、明确不适用、来源冲突分别输出 not_found、not_applicable、conflict，并附原因；value 为 null。不得写未知、暂无资料、N/A等占位内容，不得用0、false或空数组代表未知，不删除已有值。<br>冲突：比较同一主体、版本、时间和口径的原始证据；保留各候选值及证据，不投票、不平均、不按搜索排名选择，不自动覆盖旧值。不同时间或工况属于多个有条件事实，不冒充冲突。<br>证据：每个 found 值附支持该值的原文摘录、具体来源URL、source_kind、原文位置locator、资料日期source_date（不详则null）、实际访问日期accessed_at；不得编造网址、页码、日期或摘录。文本整理须逐项可追溯；URL字段的证据来自介绍该链接的页面。 |
+| institutions | 文献署名机构 | TEXT | fields.institutions | evidence_required | 含义：原始文献中该人物署名所属机构，保留文献时点与原有层级。<br>不包含：不直接当作当前任职，不把合作者的机构分配给本人。<br>格式：有序非空字符串数组；作者按署名顺序，其余按来源顺序；不按逗号拆分人名或机构名。<br>单位与条件：每项保留必要时间、角色及条件，不能用数组序号猜映射。<br>适用性：仅当资料明确涉及本词条对应事实时采集；无对应事实不得推断。<br>来源：依据可追溯的原始资料核查并补充人物信息，确认同一人物后记录身份、履历、署名及关系。<br>缺失：未找到、明确不适用、来源冲突分别输出 not_found、not_applicable、conflict，并附原因；value 为 null。不得写未知、暂无资料、N/A等占位内容，不得用0、false或空数组代表未知，不删除已有值。<br>冲突：比较同一主体、版本、时间和口径的原始证据；保留各候选值及证据，不投票、不平均、不按搜索排名选择，不自动覆盖旧值。不同时间或工况属于多个有条件事实，不冒充冲突。<br>证据：每个 found 值附支持该值的原文摘录、具体来源URL、source_kind、原文位置locator、资料日期source_date（不详则null）、实际访问日期accessed_at；不得编造网址、页码、日期或摘录。文本整理须逐项可追溯；URL字段的证据来自介绍该链接的页面。 |
+| research_fields | 研究领域 | TEXT | fields.research_fields | evidence_required | 含义：可靠资料明确说明或已审核研究记录支持的研究方向。<br>不包含：不根据一篇合著论文标题自动扩展个人全部研究领域。<br>格式：有序非空字符串数组；作者按署名顺序，其余按来源顺序；不按逗号拆分人名或机构名。<br>单位与条件：每项保留必要时间、角色及条件，不能用数组序号猜映射。<br>适用性：仅当资料明确涉及本词条对应事实时采集；无对应事实不得推断。<br>来源：依据可追溯的原始资料核查并补充人物信息，确认同一人物后记录身份、履历、署名及关系。<br>缺失：未找到、明确不适用、来源冲突分别输出 not_found、not_applicable、conflict，并附原因；value 为 null。不得写未知、暂无资料、N/A等占位内容，不得用0、false或空数组代表未知，不删除已有值。<br>冲突：比较同一主体、版本、时间和口径的原始证据；保留各候选值及证据，不投票、不平均、不按搜索排名选择，不自动覆盖旧值。不同时间或工况属于多个有条件事实，不冒充冲突。<br>证据：每个 found 值附支持该值的原文摘录、具体来源URL、source_kind、原文位置locator、资料日期source_date（不详则null）、实际访问日期accessed_at；不得编造网址、页码、日期或摘录。文本整理须逐项可追溯；URL字段的证据来自介绍该链接的页面。 |
+| aliases | 其他姓名与署名 | TEXT | fields.aliases | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
+| nationality | 国籍 | TEXT | fields.nationality | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
+| birth_date | 出生日期 | TEXT | fields.birth_date | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
+| birth_place | 出生地 | TEXT | fields.birth_place | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
+| death_date | 逝世日期 | TEXT | fields.death_date | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
+| researcher_identifier | 其他学术标识 | TEXT | fields.researcher_identifier | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
+| personal_website | 个人主页 | TEXT | fields.personal_website | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
+| degree | 最高学位 | TEXT | fields.degree | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
+| education_history | 教育履历 | TEXT | fields.education_history | evidence_required | 合并同义字段，保留原始内容、来源和条件；不得重复填充已合并的旧字段。 |
+| current_affiliation | 现任机构 | TEXT | fields.current_affiliation | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
+| academic_title | 职务与职称 | TEXT | fields.academic_title | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
+| positions | 任职履历 | TEXT | fields.positions | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
+| mentors | 导师 | TEXT | fields.mentors | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
+| students | 指导学生 | TEXT | fields.students | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
+| memberships | 学会与学术组织 | TEXT | fields.memberships | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
+| research_topics | 研究主题 | TEXT | fields.research_topics | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
+| representative_works | 代表论文与著作 | TEXT | fields.representative_works | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
+| research_projects | 参与研究计划 | TEXT | fields.research_projects | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
+| related_devices | 相关实验装置 | TEXT | fields.related_devices | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
+| patents | 专利与技术转化 | TEXT | fields.patents | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
+| software | 软件与代码 | TEXT | fields.software | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
+| datasets | 公开数据集 | TEXT | fields.datasets | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
+| collaborators | 合作研究者 | TEXT | fields.collaborators | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
+| awards | 奖项与荣誉 | TEXT | fields.awards | evidence_required | 合并同义字段，保留原始内容、来源和条件；不得重复填充已合并的旧字段。 |
+| invited_lectures | 受邀报告 | TEXT | fields.invited_lectures | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
+| teaching_courses | 教学与课程 | TEXT | fields.teaching_courses | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
+| academic_service | 学术服务 | TEXT | fields.academic_service | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
+| paper_count | 论文数量 | TEXT | fields.paper_count | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
+| citation_count | 被引次数 | TEXT | fields.citation_count | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
+| h_index | H 指数 | TEXT | fields.h_index | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
+| metrics_source | 计量数据来源 | TEXT | fields.metrics_source | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
+| metrics_date | 计量数据统计日期 | TEXT | fields.metrics_date | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
+| overview | 人物简介 | TEXT | sections.overview | evidence_required | 含义：有身份依据的人物简介，区分已确认身份和文献署名事实。<br>不包含：不猜出生、职称、国籍，不以作者登记句充当简介。<br>格式：有证据的连贯中文正文，可用Markdown和LaTeX；保留事实条件；不写采集过程、占位内容或未经支持的评价。<br>单位与条件：涉及数值时保留单位、误差、工况和来源时点。<br>适用性：仅当资料明确涉及本词条对应事实时采集；无对应事实不得推断。<br>来源：依据可追溯的原始资料核查并补充人物信息，确认同一人物后记录身份、履历、署名及关系。<br>缺失：未找到、明确不适用、来源冲突分别输出 not_found、not_applicable、conflict，并附原因；value 为 null。不得写未知、暂无资料、N/A等占位内容，不得用0、false或空数组代表未知，不删除已有值。<br>冲突：比较同一主体、版本、时间和口径的原始证据；保留各候选值及证据，不投票、不平均、不按搜索排名选择，不自动覆盖旧值。不同时间或工况属于多个有条件事实，不冒充冲突。<br>证据：每个 found 值附支持该值的原文摘录、具体来源URL、source_kind、原文位置locator、资料日期source_date（不详则null）、实际访问日期accessed_at；不得编造网址、页码、日期或摘录。文本整理须逐项可追溯；URL字段的证据来自介绍该链接的页面。 |
+| career | 研究经历 | TEXT | sections.career | evidence_required | 含义：明确记载的任职机构、职务、工作内容及时间段。<br>不包含：不将署名机构自动升级为任职履历。<br>格式：有证据的连贯中文正文，可用Markdown和LaTeX；保留事实条件；不写采集过程、占位内容或未经支持的评价。<br>单位与条件：涉及数值时保留单位、误差、工况和来源时点。<br>适用性：仅当资料明确涉及本词条对应事实时采集；无对应事实不得推断。<br>来源：依据可追溯的原始资料核查并补充人物信息，确认同一人物后记录身份、履历、署名及关系。<br>缺失：未找到、明确不适用、来源冲突分别输出 not_found、not_applicable、conflict，并附原因；value 为 null。不得写未知、暂无资料、N/A等占位内容，不得用0、false或空数组代表未知，不删除已有值。<br>冲突：比较同一主体、版本、时间和口径的原始证据；保留各候选值及证据，不投票、不平均、不按搜索排名选择，不自动覆盖旧值。不同时间或工况属于多个有条件事实，不冒充冲突。<br>证据：每个 found 值附支持该值的原文摘录、具体来源URL、source_kind、原文位置locator、资料日期source_date（不详则null）、实际访问日期accessed_at；不得编造网址、页码、日期或摘录。文本整理须逐项可追溯；URL字段的证据来自介绍该链接的页面。 |
+| contributions | 主要成果 | TEXT | sections.contributions | evidence_required | 合并同义字段，保留原始内容、来源和条件；不得重复填充已合并的旧字段。 |
+| research_path | 研究方向与发展脉络 | TEXT | sections.research_path | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
+| scientific_impact | 学术影响 | TEXT | sections.scientific_impact | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
+| teaching_and_service | 教学与学术服务 | TEXT | sections.teaching_and_service | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
+| career_timeline | 生平与研究年表 | TEXT | sections.career_timeline | evidence_required | 按字段含义核查真实资料，保留时间、条件与来源；无依据不得编造。 |
 | quality_score | 质量分数 | REAL | fields.quality_score | system | 0～100；程序计算：40%完备性＋40%证据覆盖可信度＋20%格式有效率。任一分项无法评估时留空；不代表学术价值。 |
 | completeness_score | 完备性评分 | REAL | fields.completeness_score | system | 0～100；有效非空内容字段数／适用内容字段数×100。排除身份、程序计算、暂停采集字段；有核查记录的not_applicable排除分母。 |
 | credibility_score | 可信度评分 | REAL | fields.credibility_score | system | 0～100；已填字段中具有可追溯原始来源和摘录的字段占比。仅衡量证据覆盖，不保证事实真实；排除history审计来源，无内容留空。 |
