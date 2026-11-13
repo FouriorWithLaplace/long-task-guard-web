@@ -188,7 +188,7 @@ export default function ModelSelector({ model, reasoning, onChange, locked = fal
     status = "正在查询本地 Codex，已有缓存会保留到更新成功。";
   } else if (catalog.updatedAt !== null) {
     const updatedAt = new Date(catalog.updatedAt).toLocaleString();
-    status = "使用本地缓存 · 上次更新：" + updatedAt;
+    status = "已加载 " + catalog.models.length + " 个模型 · 上次从上游更新：" + updatedAt;
   }
 
   const disabled = locked || loading || refreshing || catalog.models.length === 0;
@@ -202,7 +202,8 @@ export default function ModelSelector({ model, reasoning, onChange, locked = fal
           <select id="model" value={model} onChange={handleModelChange} disabled={disabled} className={fieldClass} title={selectedModel?.description}>
             {catalog.models.length === 0 && <option value="">暂无模型缓存</option>}
             {catalog.models.map(function renderModel(option) {
-              return <option key={option.id} value={option.id}>{option.name}</option>;
+              const label = option.name === option.id ? option.name : option.name + " (" + option.id + ")";
+              return <option key={option.id} value={option.id}>{label}</option>;
             })}
           </select>
         </div>
@@ -216,11 +217,11 @@ export default function ModelSelector({ model, reasoning, onChange, locked = fal
           </select>
         </div>
         <button type="button" onClick={handleRefresh} disabled={locked || loading || refreshing} className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-700 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50">
-          {refreshing ? "正在更新…" : "更新模型"}
+          {refreshing ? "正在获取上游模型…" : "获取最新模型"}
         </button>
       </div>
       <p role="status" className="mt-2 text-xs leading-5 text-slate-500">{status}</p>
-      <p className="mt-1 text-xs leading-5 text-slate-400">仅点击更新时查询 Codex；缓存长期保存，不会自动更新。</p>
+      <p className="mt-1 text-xs leading-5 text-slate-400">仅点击“获取最新模型”时查询 Codex；缓存长期保存，不会自动更新。</p>
       {error !== "" && <p role="alert" className="mt-2 text-sm text-red-600">{error}</p>}
     </div>
   );
